@@ -1,5 +1,4 @@
 -- {
-DROP FUNCTION _CDB_XYZ_BuildPyramid_Tile(tbl regclass, col text, tile_ext geometry, tile_res float8);
 CREATE OR REPLACE FUNCTION _CDB_XYZ_BuildPyramid_Tile(tbl regclass, col text, tile_ext geometry, tile_res float8)
 RETURNS TABLE(ext geometry, x int, y int, v int)
 AS $$
@@ -12,12 +11,15 @@ BEGIN
   sql := 'WITH grid AS ( SELECT CDB_RectangleGrid( '
       || quote_literal(tile_ext::text) || '::geometry,' || tile_res
       || ',' || tile_res
-      || ') as cell  ), hgrid AS ( SELECT cell, round((st_xmin(cell)-st_xmin('
+      || ', ST_SetSRID(ST_MakePoint(-' || (tile_res/2.0) || ', -'
+      || (tile_res/2.0) || '), ST_SRID(' || quote_literal(tile_ext::text)
+      || '::geometry))) as cell ), hgrid AS ( SELECT cell, round((st_xmin(cell)-st_xmin('
       || quote_literal(tile_ext::text) || '::geometry)+(' || tile_res
       || '/2))/' || tile_res || ') x, round((st_ymin(cell)-st_ymin('
       || quote_literal(tile_ext::text) || '::geometry)+('
       || tile_res || '/2))/' || tile_res
-      || ') y FROM grid ) SELECT g.cell as ext, g.x, g.y, count(' || quote_ident(col)
+      || ') y FROM grid ) SELECT g.cell as ext, g.x, g.y, count('
+      || quote_ident(col)
       || ') FROM hgrid g, ' || tbl::text || ' i WHERE i.'
       || quote_ident(col) || ' && ' || quote_literal(tile_ext::text)
       || '::geometry AND ST_Intersects(i.' || quote_ident(col)
