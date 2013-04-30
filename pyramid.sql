@@ -1,27 +1,31 @@
 -- {
-DROP FUNCTION _CDB_XYZ_BuildPyramid_Tile(tbl regclass, col text, tile_ext geometry, tile_res float8);
-CREATE OR REPLACE FUNCTION _CDB_XYZ_BuildPyramid_Tile(tbl regclass, col text, tile_ext geometry, tile_res float8)
+CREATE OR REPLACE FUNCTION _CDB_BuildPyramid_Tile(tbl regclass, col text, tile_ext geometry, tile_res float8)
 RETURNS TABLE(ext geometry, v int)
 AS $$
 DECLARE
   rec RECORD;
   sql text;
+  cell text;
+  originX float;
+  originY float;
   tile_totcount integer;
 BEGIN
 
-  sql := 'WITH hgrid AS ( SELECT CDB_RectangleGrid( '
-      || quote_literal(tile_ext::text) || '::geometry,' || tile_res
-      || ',' || tile_res
-      || ', ST_SetSRID(ST_MakePoint(st_xmin('
-      || quote_literal(tile_ext::text) || '::geometry) -'
-      || (tile_res/2.0) || ', st_ymin('
-      || quote_literal(tile_ext::text) || '::geometry) -'
-      || (tile_res/2.0) || '), ST_SRID(' || quote_literal(tile_ext::text)
-      || '::geometry))) as cell ) SELECT g.cell as ext, count('
-      || quote_ident(col) || ') FROM hgrid g, ' || tbl::text || ' i WHERE i.'
-      || quote_ident(col) || ' && ' || quote_literal(tile_ext::text)
-      || '::geometry AND ST_Intersects(i.' || quote_ident(col)
-      || ', g.cell) GROUP BY g.cell';
+  originX := st_xmin(tile_ext) - tile_res/2.0;
+  originy := st_ymin(tile_ext) - tile_res/2.0;
+
+  cell := 'ST_SnapToGrid(' || quote_ident(col) || ', '
+      || originX || ',' || originY || ','
+      || tile_res || ',' || tile_res || ')'
+      ;
+
+  sql := 'SELECT ST_Envelope(ST_Buffer('
+      || cell || ',' || (tile_res/2.0) || ', 1)) as ext, count('
+      || quote_ident(col) || ') FROM ' || tbl::text
+      || ' i WHERE i.' || quote_ident(col)
+      || ' && ' || quote_literal(tile_ext::text)
+      || '::geometry GROUP BY ' || cell
+      ;
 
   --RAISE DEBUG 'Query: %', sql;
 
@@ -37,7 +41,7 @@ $$
 LANGUAGE 'plpgsql'; -- }
 
 -- {
-CREATE OR REPLACE FUNCTION CDB_XYZ_BuildPyramid(tbl regclass, col text)
+CREATE OR REPLACE FUNCTION CDB_BuildPyramid(tbl regclass, col text)
 RETURNS void AS
 $$
 DECLARE
@@ -53,7 +57,7 @@ DECLARE
 BEGIN
 
   -- Setup parameters 
-  maxpix := 16384; -- 4096; -- 65535;
+  maxpix := 16383; -- 32767; -- 65535; 
 
   -- Extract table info
   WITH info AS (
@@ -84,59 +88,28 @@ BEGIN
   -- 2. Start from bottom-level summary and add summarize up to top
   --    Stop condition is when we have less than maxpix "pixels"
   tile_ext := ST_SetSRID(tblinfo.ext::geometry, tblinfo.srid);
-  tile_res := least(st_xmax(tile_ext)-st_xmin(tile_ext), st_ymax(tile_ext)-st_ymin(tile_ext)) / 1024;
+  tile_res := least(st_xmax(tile_ext)-st_xmin(tile_ext), st_ymax(tile_ext)-st_ymin(tile_ext)) / 2048; 
 
-  sql := 'INSERT INTO ' || ptab
-      || '(res, ext, c) SELECT ' 
-      || tile_res || ', ext, v FROM _CDB_XYZ_BuildPyramid_Tile('
-      || quote_literal(tbl) || ',' || quote_literal(col::text)
-      || ',' || quote_literal(tile_ext::text)
-      || ', ' || tile_res || ')';
-
-  -- RAISE DEBUG '%', sql;
-
-  EXECUTE sql;
-
-  GET DIAGNOSTICS pixel_vals := ROW_COUNT;
-
-  RAISE DEBUG 'START: % pixels with resolution %', pixel_vals, tile_res;
-
-  sql := 'CREATE INDEX ON ' || ptab || ' using gist (ext)';
-  RAISE DEBUG '%', sql;
-  EXECUTE sql;
-
-  sql := 'CREATE INDEX ON ' || ptab || ' (res)';
-  RAISE DEBUG '%', sql;
-  EXECUTE sql;
-
-  -- TODO: build upper levels based on lower ones
-  WHILE pixel_vals > maxpix LOOP
-
-    prev_tile_res = tile_res;
-    tile_res := tile_res * 2;
+  LOOP
 
     sql := 'INSERT INTO ' || ptab
-      || '(res, ext, c) ' 
-      || 'WITH hgrid AS ( SELECT CDB_RectangleGrid( '
-      || quote_literal(tile_ext::text) || '::geometry,' || tile_res
-      || ',' || tile_res
-      || ', ST_SetSRID(ST_MakePoint(st_xmin('
-      || quote_literal(tile_ext::text) || '::geometry) -'
-      || (tile_res/2.0) || ', st_ymin('
-      || quote_literal(tile_ext::text) || '::geometry) -'
-      || (tile_res/2.0) || '), ST_SRID(' || quote_literal(tile_ext::text)
-      || '::geometry))) as cell ) SELECT ' || tile_res
-      || ', g.cell as ext, sum(c) FROM hgrid g,'
-      || ptab || ' i WHERE i.res = ' || prev_tile_res
-      || ' AND ST_Intersects(i.ext, g.cell) GROUP BY g.cell';
+        || '(res, ext, c) SELECT ' 
+        || tile_res || ', ext, v FROM _CDB_BuildPyramid_Tile('
+        || quote_literal(tbl) || ',' || quote_literal(col::text)
+        || ',' || quote_literal(tile_ext::text)
+        || ', ' || tile_res || ')';
 
-    RAISE DEBUG '%', sql;
+    -- RAISE DEBUG '%', sql;
 
     EXECUTE sql;
 
     GET DIAGNOSTICS pixel_vals := ROW_COUNT;
 
     RAISE DEBUG '% pixels with resolution %', pixel_vals, tile_res;
+
+    IF pixel_vals <= maxpix THEN EXIT; END IF;
+
+    tile_res := tile_res * 2;
 
   END LOOP;
 
