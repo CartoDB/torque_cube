@@ -68,6 +68,8 @@ DECLARE
   rec RECORD;
   pixel_vals integer;
   ntslots integer;
+  resolutions float8[];
+  time_range numeric[];
 BEGIN
 
   -- Setup parameters 
@@ -94,6 +96,8 @@ BEGIN
     RAISE DEBUG '%', sql;
     EXECUTE sql INTO tbltinfo;
     tbltinfo.res := ceil(extract(epoch from tbltinfo.max - tbltinfo.min) / ntslots);
+
+    time_range := ARRAY[ extract(epoch from tbltinfo.max), extract(epoch from tbltinfo.min) ];
 
     RAISE DEBUG 'Time resolution: % seconds', tbltinfo.res;
 
@@ -126,6 +130,8 @@ BEGIN
   -- TODO: compute upper levels from lower ones, using ST_Covers
 
   LOOP
+
+    resolutions := resolutions || tile_res;
 
     sql := 'INSERT INTO ' || ptab
         || '(res, ext, t, c) SELECT '
@@ -161,12 +167,117 @@ BEGIN
   EXECUTE sql;
 
 
-
   -- 3. Setup triggers to maintain the pyramid table
   --    and indices on the pyramid table
+  sql := 'CREATE TRIGGER cdb_maintain_pyramid AFTER INSERT OR UPDATE OR DELETE ON '
+    || tbl || ' FOR EACH ROW EXECUTE PROCEDURE _CDB_PyramidTrigger('
+    || col || ',' || tcol || ',' || quote_literal(ptab) || ','
+    || quote_literal(tile_ext::text) || ','
+    || quote_literal(resolutions::text) || ','
+    || quote_literal(time_range::text) || ',' || ntslots || ')';
+  RAISE DEBUG '%', sql;
+  EXECUTE sql;
 
 
 END;
 $$
 LANGUAGE 'plpgsql';
 -- }
+
+
+CREATE OR REPLACE FUNCTION _CDB_PyramidTrigger()
+RETURNS TRIGGER AS
+$$
+DECLARE
+  gcol text;
+  tcol text;
+  ptab text;
+  full_extent geometry;
+  resolutions float8[];
+  res float8;
+  tran numeric[];
+  tres integer;
+  sql text;
+  g geometry;
+  g2 geometry;
+  i integer;
+  originX float8;
+  originY float8;
+  oldinfo RECORD;
+  newinfo RECORD;
+BEGIN
+
+  IF TG_NARGS < 7 THEN
+    RAISE EXCEPTION 'Illegal call to _CDB_PyramidTrigger (need 7 args, got %)', TG_NARGS;
+  END IF;
+
+  gcol := TG_ARGV[0];
+  tcol := TG_ARGV[1];
+  ptab := TG_ARGV[2];
+  full_extent := TG_ARGV[3];
+  resolutions := TG_ARGV[4];
+  tran := TG_ARGV[5];
+  tres := TG_ARGV[6];
+
+  IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN
+
+    -- Extract info from new record
+    sql := 'SELECT ($1).' || quote_ident(tcol) || ' as t, ($1).' || quote_ident(gcol) || ' as g';
+    --RAISE DEBUG '%', sql;
+    EXECUTE sql USING NEW INTO newinfo;
+    newinfo.t := 'epoch'::timestamp +
+         ( tran[1] + round( ( extract(epoch from newinfo.t) - tran[1] ) / tres ) * tres ) * '1s'::interval;
+
+  END IF;
+
+  -- Extract info from OLD record
+  IF TG_OP = 'DELETE' OR TG_OP = 'UPDATE' THEN
+
+    -- Extract info from old record
+    sql := 'SELECT ($1).' || quote_ident(tcol) || ' as t, ($1).' || quote_ident(gcol) || ' as g';
+    --RAISE DEBUG '%', sql;
+    EXECUTE sql USING OLD INTO oldinfo;
+    oldinfo.t := 'epoch'::timestamp +
+         ( tran[1] + round( ( extract(epoch from oldinfo.t) - tran[1] ) / tres ) * tres ) * '1s'::interval;
+
+  END IF;
+
+  FOR i IN 1..array_upper(resolutions,1) LOOP
+    res := resolutions[i];
+    RAISE DEBUG ' updating resolution %', res;
+    originX := st_xmin(full_extent) - res/2.0;
+    originY := st_ymin(full_extent) - res/2.0;
+
+    IF TG_OP = 'DELETE' OR TG_OP = 'UPDATE' THEN
+      -- decrement
+      RAISE WARNING 'Old is defined';
+      g := ST_SnapToGrid(oldinfo.g, originX, originY, res, res);
+      RAISE DEBUG ' resolution % : % @ %', res, ST_AsText(g), oldinfo.t;
+      -- Updel
+      sql := 'UPDATE ' || ptab || ' set c=c-1 where t='
+        || quote_literal(oldinfo.t) || ' AND ext && ' || quote_literal(oldinfo.g::text);
+      RAISE DEBUG ' %', sql;
+      EXECUTE sql;
+    END IF;
+
+    IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN
+      -- increment
+      g := ST_SnapToGrid(newinfo.g, originX, originY, res, res);
+      RAISE DEBUG ' resolution % : % @ %', res, ST_AsText(g), newinfo.t;
+      -- Upsert
+      sql := 'WITH upsert as (UPDATE ' || ptab || ' set c=c+1 where t='
+        || quote_literal(newinfo.t) || ' AND ext && ' || quote_literal(newinfo.g::text)
+        || ' RETURNING ext ) INSERT INTO '
+        || ptab || '(res,ext,t,c) SELECT ' || res || ', ST_Envelope(ST_Buffer('
+        || quote_literal(newinfo.g::text) || ',' || (res/2.0) || ', 1)), '
+        || quote_literal(newinfo.t)
+        || ', 1 WHERE NOT EXISTS (SELECT * FROM upsert)'; -- 1 is the count
+      RAISE DEBUG ' %', sql;
+      EXECUTE sql;
+    END IF;
+  END LOOP;
+
+  RETURN NULL;
+END;
+$$
+LANGUAGE 'plpgsql';
