@@ -86,10 +86,16 @@ BEGIN
     IF tcol IS NOT NULL THEN
       sql := sql || ',  t';
     END IF;
-
     sql := sql || '), ins AS ( INSERT INTO ' || ptab
-      || '(res, ext, t, c) SELECT ' || tile_res
-      || ', ext, t, c FROM pixels ) SELECT count(distinct ext) FROM pixels ';
+      || '(res, ext, ';
+    IF tcol IS NOT NULL THEN
+      sql := sql || 't, ';
+    END IF;
+      sql := sql || 'c) SELECT ' || tile_res || ', ext, ';
+    IF tcol IS NOT NULL THEN
+      sql := sql || 't, ';
+    END IF;
+    sql := sql || 'c FROM pixels ) SELECT count(distinct ext) FROM pixels ';
 
     RAISE DEBUG '%', sql;
 
@@ -117,11 +123,11 @@ BEGIN
 
   sql := 'CREATE TRIGGER cdb_maintain_pyramid AFTER INSERT OR UPDATE OR DELETE ON '
     || tbl || ' FOR EACH ROW EXECUTE PROCEDURE _CDB_PyramidTrigger('
-    || col || ',' || tcol || ',' || quote_literal(ptab) || ','
+    || col || ',' || COALESCE(tcol, quote_literal('null')) || ',' || quote_literal(ptab) || ','
     || quote_literal(tile_ext::text) || ','
     || quote_literal(resolutions::text) || ','
-    || quote_literal(temporal_bins::text) || ')';
-  RAISE DEBUG '%', sql;
+    || quote_literal(COALESCE(temporal_bins, '{}')::text) || ')';
+  RAISE DEBUG 'TRIGGER CREATION: %', sql;
   EXECUTE sql;
 
 
@@ -144,7 +150,6 @@ DECLARE
   temporal_bins numeric[];
   sql text;
   g geometry;
-  g2 geometry;
   i integer;
   originX float8;
   originY float8;
@@ -163,15 +168,16 @@ BEGIN
   resolutions := TG_ARGV[4];
   temporal_bins := TG_ARGV[5];
 
-  sql := 'SELECT CASE ';
-  FOR i IN 1..array_upper(temporal_bins, 1) LOOP
-    sql := sql || ' WHEN extract(epoch from ($1).'
-      || quote_ident(tcol) || ') < '
-      || temporal_bins[i] || ' THEN ' || (i-1);
-  END LOOP;
-  sql := sql || 'ELSE ' || array_upper(temporal_bins, 1)
-    || ' END as t, ($1).'
-    || quote_ident(gcol) || ' as g';
+  sql := 'SELECT ($1).' || quote_ident(gcol) || ' as g';
+  IF tcol IS NOT NULL THEN
+    sql := sql || ', CASE ';
+    FOR i IN 1..array_upper(temporal_bins, 1) LOOP
+      sql := sql || ' WHEN extract(epoch from ($1).'
+        || quote_ident(tcol) || ') < '
+        || temporal_bins[i] || ' THEN ' || (i-1);
+    END LOOP;
+    sql := sql || 'ELSE ' || array_upper(temporal_bins, 1) || ' END as t';
+  END IF;
 
   -- Extract info from NEW record
   IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN
