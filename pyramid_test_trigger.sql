@@ -1,5 +1,5 @@
 \i pyramid.sql
-DROP TRIGGER cdb_maintain_pyramid ON istituti_small;
+--DROP TRIGGER cdb_maintain_pyramid ON istituti_small;
 DROP TABLE IF EXISTS istituti_small_pyramid CASCADE;
 SELECT CDB_BuildPyramid('istituti_small', 'the_geom_webmercator', 'created_at');
 

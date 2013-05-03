@@ -1,58 +1,4 @@
 -- {
-CREATE OR REPLACE FUNCTION _CDB_BuildPyramid_Tile(tbl regclass, col text, res float8, originX float8, originY float8, tcol text, tres integer, torigin integer)
-RETURNS TABLE(ext geometry, t timestamp, c int)
-AS $$
-DECLARE
-  rec RECORD;
-  sql text;
-  cell text;
-  tcell text;
-  tslot text;
-  tile_totcount integer;
-BEGIN
-
-  cell := 'ST_SnapToGrid(' || quote_ident(col) || ', '
-      || originX || ',' || originY || ','
-      || res || ',' || res || ')'
-      ;
-
-  tcell := '''epoch''::timestamp + ( '
-      || torigin
-      || ' + round( ( extract(epoch from ' || quote_ident(tcol) || ')-'
-      || torigin || ') / ' || tres || ') * ' || tres
-      || ') * ''1s''::interval';
-
-  -- TODO: use a diagonal line for the cell extent ?
-  sql := 'SELECT ST_Envelope(ST_Buffer('
-      || cell || ',' || (res/2.0) || ', 1)) as ext, ';
-  IF tcol IS NOT NULL THEN
-    sql := sql || tcell || ' as t, ';
-  END IF;
-  sql := sql
-      || 'count('
-      || quote_ident(col) || ') FROM ' || tbl::text
-      || ' GROUP BY ' || cell;
-  IF tcol IS NOT NULL THEN
-    sql := sql || ',  t';
-  END IF;
-
-  RAISE DEBUG 'Query: %', sql;
-
-  FOR rec IN  EXECUTE sql LOOP
-    --RAISE DEBUG 'Count in macropixel %,%:%', rec.x, rec.y, rec.count;
-    ext := rec.ext;
-    IF tcol IS NOT NULL THEN
-      t := rec.t;
-    END IF;
-    c := rec.count;
-    RETURN NEXT;
-  END LOOP;
-
-END;
-$$
-LANGUAGE 'plpgsql'; -- }
-
--- {
 CREATE OR REPLACE FUNCTION CDB_BuildPyramid(tbl regclass, col text, tcol text DEFAULT NULL)
 RETURNS void AS
 $$
@@ -72,8 +18,8 @@ DECLARE
   time_range numeric[];
 BEGIN
 
-  -- Setup parameters 
-  maxpix := 16383; 
+  -- Setup parameters  (higher number to stop first)
+  maxpix := 65535; -- 256x256 are enough
 
   -- Extract table info
   WITH info AS (
@@ -97,7 +43,7 @@ BEGIN
     EXECUTE sql INTO tbltinfo;
     tbltinfo.res := ceil(extract(epoch from tbltinfo.max - tbltinfo.min) / ntslots);
 
-    time_range := ARRAY[ extract(epoch from tbltinfo.max), extract(epoch from tbltinfo.min) ];
+    time_range := ARRAY[ extract(epoch from tbltinfo.min), extract(epoch from tbltinfo.max) ];
 
     RAISE DEBUG 'Time resolution: % seconds', tbltinfo.res;
 
@@ -122,7 +68,9 @@ BEGIN
   -- 2. Start from bottom-level summary and add summarize up to top
   --    Stop condition is when we have less than maxpix "pixels"
   tile_ext := ST_SetSRID(tblinfo.ext::geometry, tblinfo.srid);
-  tile_res := least(st_xmax(tile_ext)-st_xmin(tile_ext), st_ymax(tile_ext)-st_ymin(tile_ext)) / 2048; 
+  tile_res := least(st_xmax(tile_ext)-st_xmin(tile_ext), st_ymax(tile_ext)-st_ymin(tile_ext))
+        / (256*8); -- enough to render 8 tiles per side with no loss of precision
+  -- TODO: round resolution to be on the webmercator resolution set ?
 
   -- TODO: re-compute tile_ext to always be the full webmercator extent
   --       or better yet take it as a parameter
@@ -135,15 +83,27 @@ BEGIN
 
     sql := 'INSERT INTO ' || ptab
         || '(res, ext, t, c) SELECT '
-        || tile_res || ', ext, t, c FROM _CDB_BuildPyramid_Tile('
-        || quote_literal(tbl) || ',' || quote_literal(col::text)
-        || ',' || tile_res || ', ' || st_xmin(tile_ext) - tile_res/2.0 || ', '
-        || st_ymin(tile_ext) - tile_res/2.0;
+        || tile_res
+        || ', ST_Envelope(ST_Buffer('
+        || 'ST_SnapToGrid(' || quote_ident(col) || ', '
+        || st_xmin(tile_ext) - tile_res/2.0 || ','
+        || st_ymin(tile_ext) - tile_res/2.0 || ','
+        || tile_res || ',' || tile_res || ')'
+        || ',' || (tile_res/2.0) || ', 1)) as ext, ';
     IF tcol IS NOT NULL THEN
-        sql := sql || ', ' || quote_literal(tcol) || ','
-          || tbltinfo.res || ',' || floor(extract(epoch from tbltinfo.min));
+      sql := sql
+        || '''epoch''::timestamp + ( ' || time_range[1]
+        || ' + round( ( extract(epoch from ' || quote_ident(tcol) || ')-'
+        || time_range[1] || ') / ' || tbltinfo.res || ') * ' || tbltinfo.res
+        || ') * ''1s''::interval as t, ';
     END IF;
-    sql := sql || ')';
+    sql := sql
+        || 'count('
+        || quote_ident(col) || ') FROM ' || tbl::text
+        || ' GROUP BY ext'; 
+    IF tcol IS NOT NULL THEN
+      sql := sql || ',  t';
+    END IF;
 
     RAISE DEBUG '%', sql;
 
@@ -169,6 +129,10 @@ BEGIN
 
   -- 3. Setup triggers to maintain the pyramid table
   --    and indices on the pyramid table
+  sql := 'DROP TRIGGER IF EXISTS cdb_maintain_pyramid ON ' || tbl;
+  RAISE DEBUG '%', sql;
+  EXECUTE sql;
+
   sql := 'CREATE TRIGGER cdb_maintain_pyramid AFTER INSERT OR UPDATE OR DELETE ON '
     || tbl || ' FOR EACH ROW EXECUTE PROCEDURE _CDB_PyramidTrigger('
     || col || ',' || tcol || ',' || quote_literal(ptab) || ','
@@ -250,7 +214,6 @@ BEGIN
 
     IF TG_OP = 'DELETE' OR TG_OP = 'UPDATE' THEN
       -- decrement
-      RAISE WARNING 'Old is defined';
       g := ST_SnapToGrid(oldinfo.g, originX, originY, res, res);
       RAISE DEBUG ' resolution % : % @ %', res, ST_AsText(g), oldinfo.t;
       -- Updel
