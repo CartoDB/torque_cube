@@ -86,8 +86,7 @@ BEGIN
 
     resolutions := resolutions || tile_res;
 
-    sql := 'INSERT INTO ' || ptab
-        || '(res, ext, t, c) SELECT '
+    sql := 'WITH pixels AS ( SELECT '
         || tile_res
         || ', ST_Envelope(ST_Buffer('
         || 'ST_SnapToGrid(' || quote_ident(col) || ', '
@@ -108,19 +107,19 @@ BEGIN
     END IF;
     sql := sql
         || 'count('
-        || quote_ident(col) || ') FROM ' || tbl::text
+        || quote_ident(col) || ') as c FROM ' || tbl::text
         || ' GROUP BY ext'; 
     IF tcol IS NOT NULL THEN
       sql := sql || ',  t';
     END IF;
 
+    sql := sql || '), ins AS ( INSERT INTO ' || ptab
+      || '(res, ext, t, c) SELECT ' || tile_res
+      || ', ext, t, c FROM pixels ) SELECT count(distinct ext) FROM pixels ';
+
     RAISE DEBUG '%', sql;
 
-    EXECUTE sql;
-
-    sql := 'SELECT count(distinct ext) FROM ' || ptab || ' WHERE res = ' || tile_res;
     EXECUTE sql INTO pixel_vals;
-    --GET DIAGNOSTICS pixel_vals := ROW_COUNT;
 
     RAISE DEBUG '% pixels with resolution %', pixel_vals, tile_res;
 
