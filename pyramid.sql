@@ -3,7 +3,7 @@
 -- Pixel are in this form:
 --  <num_timeslots> [<t1>,<tN>] <f1t1>,<f1tN> [<f2t1>,<f2tN>]
 --
--- 
+--  {
 CREATE OR REPLACE FUNCTION CDB_TorquePixel_add(target numeric[], what numeric[])
 RETURNS numeric[] AS
 $$
@@ -77,6 +77,83 @@ BEGIN
 END;
 $$
 LANGUAGE 'plpgsql' STRICT;
+-- }
+
+-- Delete the value of a torque pixel (what) from another (target)
+--
+-- Pixel are in this form:
+--  <num_timeslots> [<t1>,<tN>] <f1t1>,<f1tN> [<f2t1>,<f2tN>]
+--
+--  {
+CREATE OR REPLACE FUNCTION CDB_TorquePixel_del(target numeric[], what numeric[])
+RETURNS numeric[] AS
+$$
+DECLARE
+  i integer;
+  si integer;
+  ti integer;
+  tvaloff integer;
+  svaloff integer;
+  tslot integer;
+  ntslots integer;
+  ntarget numeric[];
+BEGIN
+  ntslots := target[1];
+  svaloff := 2 + what[1];
+
+  IF what[1] > 1 THEN
+    RAISE EXCEPTION 'Multi time slots source pixel value unsupported';
+  END IF;
+
+  IF ntslots > 0 THEN
+    -- target has time slots, find our ones
+    IF what[1] != 1 THEN
+      RAISE EXCEPTION 'Cannot delete a timeless value from a time-based pixel';
+    END IF;
+    tslot := what[2];
+    FOR i IN 2..target[1]+1 LOOP
+      IF target[i] = tslot THEN
+        ntarget := target; 
+        tvaloff := ntslots + i;
+        EXIT;
+      END IF;
+    END LOOP;
+    IF tvaloff IS NULL THEN
+      -- nothing to do here (unexpected?)
+      RAISE WARNING 'Source pixel timeslot not found in target';
+      return target;
+    END IF;
+  ELSE
+    -- target has no time slots
+    IF what[1] != 0 THEN
+      RAISE WARNING 'Discarding time slot from value (target is not time-based)';
+    END IF;
+    ntarget := target; 
+    tvaloff := 2;
+  END IF;
+
+  RAISE DEBUG 'Source: % (val off %)', what, svaloff;
+  RAISE DEBUG 'Target: %', target;
+  RAISE DEBUG 'Ntarget: % (val off %, ntslots %)', ntarget, tvaloff, ntslots;
+  RAISE DEBUG 'Value offsets: s=% t=%', svaloff, tvaloff;
+
+  -- TODO: add each value of source to value of target
+  FOR i IN 0..(array_upper(what, 1) - svaloff) LOOP
+    si := svaloff+i;
+    ti := tvaloff+(i*COALESCE(NULLIF(ntslots,0),1)); 
+    RAISE DEBUG 'Adding s:% (%) to t:% (%)', si, what[si], ti, ntarget[ti];
+    ntarget[ti] := ntarget[ti] - what[si];
+  END LOOP;
+
+  RAISE DEBUG '- %', target;
+  RAISE DEBUG '+ %', ntarget;
+
+  RETURN ntarget;
+
+END;
+$$
+LANGUAGE 'plpgsql' STRICT;
+-- }
 
 -- {
 CREATE OR REPLACE FUNCTION CDB_BuildPyramid(tbl regclass, col text, tcol text, temporal_bins numeric[])

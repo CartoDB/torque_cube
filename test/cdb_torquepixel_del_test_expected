@@ -1,0 +1,8 @@
+1|{0,1,1,1}
+WARNING:  Discarding time slot from value (target is not time-based)
+2|{0,1,1,1}
+ERROR:  Multi time slots source pixel value unsupported
+4|{1,9,1,1,1}
+5|{2,8,9,1,2,1,0,1,1}
+WARNING:  Source pixel timeslot not found in target
+6|{1,8,9,8,7}
