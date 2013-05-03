@@ -16,6 +16,7 @@ DECLARE
   ntslots integer;
   resolutions float8[];
   time_range numeric[];
+  temporal_bins numeric[];
 BEGIN
 
   -- Setup parameters  (higher number to stop first)
@@ -42,10 +43,14 @@ BEGIN
     RAISE DEBUG '%', sql;
     EXECUTE sql INTO tbltinfo;
     tbltinfo.res := ceil(extract(epoch from tbltinfo.max - tbltinfo.min) / ntslots);
-
     time_range := ARRAY[ extract(epoch from tbltinfo.min), extract(epoch from tbltinfo.max) ];
 
+    FOR i IN 1..ntslots LOOP
+      temporal_bins[i] := time_range[1] + ( tbltinfo.res * i );
+    END LOOP;
+
     RAISE DEBUG 'Time resolution: % seconds', tbltinfo.res;
+    RAISE DEBUG 'Temporal bins: %', temporal_bins;
 
   END IF;
 
@@ -53,7 +58,7 @@ BEGIN
   ptab := quote_ident(tblinfo.nsp) || '."' || tblinfo.tab || '_pyramid' || '"';
   sql := 'CREATE TABLE ' || ptab || '(res float8, ext geometry, tres integer, ';
   IF tcol IS NOT NULL THEN
-      sql := sql || ' t timestamp,';
+      sql := sql || ' t integer,';
   END IF;
   sql := sql || 'c int)';
   BEGIN
@@ -92,10 +97,14 @@ BEGIN
         || ',' || (tile_res/2.0) || ', 1)) as ext, ';
     IF tcol IS NOT NULL THEN
       sql := sql
-        || '''epoch''::timestamp + ( ' || time_range[1]
-        || ' + round( ( extract(epoch from ' || quote_ident(tcol) || ')-'
-        || time_range[1] || ') / ' || tbltinfo.res || ') * ' || tbltinfo.res
-        || ') * ''1s''::interval as t, ';
+        || 'CASE';
+      FOR i IN 1..array_upper(temporal_bins, 1) LOOP
+        sql := sql
+          || ' WHEN extract(epoch from ' || quote_ident(tcol) || ') < '
+          || temporal_bins[i] || ' THEN ' || (i-1);
+      END LOOP;
+      sql := sql || 'ELSE ' || array_upper(temporal_bins, 1)
+        || ' END as t,';
     END IF;
     sql := sql
         || 'count('
@@ -138,7 +147,7 @@ BEGIN
     || col || ',' || tcol || ',' || quote_literal(ptab) || ','
     || quote_literal(tile_ext::text) || ','
     || quote_literal(resolutions::text) || ','
-    || quote_literal(time_range::text) || ',' || ntslots || ')';
+    || quote_literal(temporal_bins::text) || ')';
   RAISE DEBUG '%', sql;
   EXECUTE sql;
 
@@ -159,8 +168,7 @@ DECLARE
   full_extent geometry;
   resolutions float8[];
   res float8;
-  tran numeric[];
-  tres integer;
+  temporal_bins numeric[];
   sql text;
   g geometry;
   g2 geometry;
@@ -171,8 +179,8 @@ DECLARE
   newinfo RECORD;
 BEGIN
 
-  IF TG_NARGS < 7 THEN
-    RAISE EXCEPTION 'Illegal call to _CDB_PyramidTrigger (need 7 args, got %)', TG_NARGS;
+  IF TG_NARGS < 6 THEN
+    RAISE EXCEPTION 'Illegal call to _CDB_PyramidTrigger (need 6 args, got %)', TG_NARGS;
   END IF;
 
   gcol := TG_ARGV[0];
@@ -180,30 +188,26 @@ BEGIN
   ptab := TG_ARGV[2];
   full_extent := TG_ARGV[3];
   resolutions := TG_ARGV[4];
-  tran := TG_ARGV[5];
-  tres := TG_ARGV[6];
+  temporal_bins := TG_ARGV[5];
 
+  sql := 'SELECT CASE ';
+  FOR i IN 1..array_upper(temporal_bins, 1) LOOP
+    sql := sql || ' WHEN extract(epoch from ($1).'
+      || quote_ident(tcol) || ') < '
+      || temporal_bins[i] || ' THEN ' || (i-1);
+  END LOOP;
+  sql := sql || 'ELSE ' || array_upper(temporal_bins, 1)
+    || ' END as t, ($1).'
+    || quote_ident(gcol) || ' as g';
+
+  -- Extract info from NEW record
   IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN
-
-    -- Extract info from new record
-    sql := 'SELECT ($1).' || quote_ident(tcol) || ' as t, ($1).' || quote_ident(gcol) || ' as g';
-    --RAISE DEBUG '%', sql;
     EXECUTE sql USING NEW INTO newinfo;
-    newinfo.t := 'epoch'::timestamp +
-         ( tran[1] + round( ( extract(epoch from newinfo.t) - tran[1] ) / tres ) * tres ) * '1s'::interval;
-
   END IF;
 
   -- Extract info from OLD record
   IF TG_OP = 'DELETE' OR TG_OP = 'UPDATE' THEN
-
-    -- Extract info from old record
-    sql := 'SELECT ($1).' || quote_ident(tcol) || ' as t, ($1).' || quote_ident(gcol) || ' as g';
-    --RAISE DEBUG '%', sql;
     EXECUTE sql USING OLD INTO oldinfo;
-    oldinfo.t := 'epoch'::timestamp +
-         ( tran[1] + round( ( extract(epoch from oldinfo.t) - tran[1] ) / tres ) * tres ) * '1s'::interval;
-
   END IF;
 
   FOR i IN 1..array_upper(resolutions,1) LOOP

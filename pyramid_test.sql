@@ -19,7 +19,7 @@ SELECT count(distinct ext) FROM istituti_pyramid p
 -- Fetch pixels for tile 5,4,3
 SELECT
   st_xmin(ext) as x, st_ymin(ext) as y,
-  array_agg(extract(epoch from t)::text || ':' || c::text) as v
+  array_agg(t::text || ':' || c::text) as v
   FROM istituti_pyramid p
   WHERE p.res = ( select max(res) from istituti_pyramid
                  where res < CDB_XYZ_Resolution(3) )
