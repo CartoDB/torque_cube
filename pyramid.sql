@@ -1,5 +1,5 @@
 -- {
-CREATE OR REPLACE FUNCTION CDB_BuildPyramid(tbl regclass, col text, tcol text DEFAULT NULL)
+CREATE OR REPLACE FUNCTION CDB_BuildPyramid(tbl regclass, col text, tcol text, temporal_bins numeric[])
 RETURNS void AS
 $$
 DECLARE
@@ -13,10 +13,7 @@ DECLARE
   prev_tile_res float8;
   rec RECORD;
   pixel_vals integer;
-  ntslots integer;
   resolutions float8[];
-  time_range numeric[];
-  temporal_bins numeric[];
 BEGIN
 
   -- Setup parameters  (higher number to stop first)
@@ -36,24 +33,6 @@ BEGIN
 
   RAISE DEBUG '"%"."%" ext is %', tblinfo.nsp, tblinfo.tab, tblinfo.ext;
 
-  ntslots := 16;
-  IF tcol IS NOT NULL THEN
-    sql := 'SELECT min(' || quote_ident(tcol) || '), max('
-      || quote_ident(tcol) || '), NULL::integer as res FROM ' || tbl;
-    RAISE DEBUG '%', sql;
-    EXECUTE sql INTO tbltinfo;
-    tbltinfo.res := ceil(extract(epoch from tbltinfo.max - tbltinfo.min) / ntslots);
-    time_range := ARRAY[ extract(epoch from tbltinfo.min), extract(epoch from tbltinfo.max) ];
-
-    FOR i IN 1..ntslots LOOP
-      temporal_bins[i] := time_range[1] + ( tbltinfo.res * i );
-    END LOOP;
-
-    RAISE DEBUG 'Time resolution: % seconds', tbltinfo.res;
-    RAISE DEBUG 'Temporal bins: %', temporal_bins;
-
-  END IF;
-
   -- 1. Create the pyramid table 
   ptab := quote_ident(tblinfo.nsp) || '."' || tblinfo.tab || '_pyramid' || '"';
   sql := 'CREATE TABLE ' || ptab || '(res float8, ext geometry, tres integer, ';
@@ -61,12 +40,7 @@ BEGIN
       sql := sql || ' t integer,';
   END IF;
   sql := sql || 'c int)';
-  BEGIN
-    EXECUTE sql;
-  EXCEPTION 
-    WHEN OTHERS THEN
-      RAISE EXCEPTION 'Got % (%)', SQLERRM, SQLSTATE;
-  END;
+  EXECUTE sql;
 
   --sql := 'SET enable_seqscan = OFF'; EXECUTE sql;
 

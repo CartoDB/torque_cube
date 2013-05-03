@@ -1,7 +1,18 @@
 \i pyramid.sql
 --DROP TRIGGER cdb_maintain_pyramid ON istituti_small;
 DROP TABLE IF EXISTS istituti_small_pyramid CASCADE;
-SELECT CDB_BuildPyramid('istituti_small', 'the_geom_webmercator', 'created_at');
+
+WITH tinfo AS (
+  SELECT extract(epoch from min(created_at)) as min,
+         extract(epoch from max(created_at)) as max
+  FROM istituti_small
+), tslots AS (
+  SELECT array_agg((t.min + ( (t.max-t.min) / 16 ) * i)::numeric) as slots
+  FROM tinfo t, generate_series(1, 15) i
+)
+SELECT CDB_BuildPyramid('istituti_small', 'the_geom_webmercator', 'created_at',
+                        t.slots)
+FROM tslots t;
 
 -- Print summary of pixels
 select res, sum(c), count(distinct ext) from istituti_small_pyramid
