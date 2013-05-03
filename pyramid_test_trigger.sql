@@ -4,7 +4,7 @@ DROP TABLE IF EXISTS istituti_small_pyramid CASCADE;
 SELECT CDB_BuildPyramid('istituti_small', 'the_geom_webmercator', 'created_at');
 
 -- Print summary of pixels
-select res, sum(c), count(*) from istituti_small_pyramid
+select res, sum(c), count(distinct ext) from istituti_small_pyramid
 group by res order by res desc;
 
 -- Print summary of time slots per resolution
