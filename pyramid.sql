@@ -61,21 +61,21 @@ BEGIN
     tvaloff := 2;
   END IF;
 
-  RAISE DEBUG 'Source: % (val off %)', what, svaloff;
-  RAISE DEBUG 'Target: %', target;
-  RAISE DEBUG 'Ntarget: % (val off %, ntslots %)', ntarget, tvaloff, ntslots;
-  RAISE DEBUG 'Value offsets: s=% t=%', svaloff, tvaloff;
+  -- RAISE DEBUG 'Source: % (val off %)', what, svaloff;
+  -- RAISE DEBUG 'Target: %', target;
+  -- RAISE DEBUG 'Ntarget: % (val off %, ntslots %)', ntarget, tvaloff, ntslots;
+  -- RAISE DEBUG 'Value offsets: s=% t=%', svaloff, tvaloff;
 
   -- TODO: add each value of source to value of target
   FOR i IN 0..(array_upper(what, 1) - svaloff) LOOP
     si := svaloff+i;
     ti := tvaloff+(i*COALESCE(NULLIF(ntslots,0),1)); 
-    RAISE DEBUG 'Adding s:% (%) to t:% (%)', si, what[si], ti, ntarget[ti];
+    --RAISE DEBUG 'Adding s:% (%) to t:% (%)', si, what[si], ti, ntarget[ti];
     ntarget[ti] := ntarget[ti] + what[si];
   END LOOP;
 
-  RAISE DEBUG '- %', target;
-  RAISE DEBUG '+ %', ntarget;
+  --RAISE DEBUG '- %', target;
+  --RAISE DEBUG '+ %', ntarget;
 
   RETURN ntarget;
 
@@ -84,8 +84,8 @@ $$
 LANGUAGE 'plpgsql';
 -- }
 
-DROP AGGREGATE IF EXISTS CDB_TorquePixel_sum (numeric[]);
-CREATE AGGREGATE CDB_TorquePixel_sum (numeric[])
+DROP AGGREGATE IF EXISTS CDB_TorquePixel_agg (numeric[]);
+CREATE AGGREGATE CDB_TorquePixel_agg (numeric[])
 (
   sfunc = CDB_TorquePixel_add,
   stype = numeric[]
@@ -144,21 +144,21 @@ BEGIN
     tvaloff := 2;
   END IF;
 
-  RAISE DEBUG 'Source: % (val off %)', what, svaloff;
-  RAISE DEBUG 'Target: %', target;
-  RAISE DEBUG 'Ntarget: % (val off %, ntslots %)', ntarget, tvaloff, ntslots;
-  RAISE DEBUG 'Value offsets: s=% t=%', svaloff, tvaloff;
+  --RAISE DEBUG 'Source: % (val off %)', what, svaloff;
+  --RAISE DEBUG 'Target: %', target;
+  --RAISE DEBUG 'Ntarget: % (val off %, ntslots %)', ntarget, tvaloff, ntslots;
+  --RAISE DEBUG 'Value offsets: s=% t=%', svaloff, tvaloff;
 
   -- TODO: add each value of source to value of target
   FOR i IN 0..(array_upper(what, 1) - svaloff) LOOP
     si := svaloff+i;
     ti := tvaloff+(i*COALESCE(NULLIF(ntslots,0),1)); 
-    RAISE DEBUG 'Adding s:% (%) to t:% (%)', si, what[si], ti, ntarget[ti];
+    --RAISE DEBUG 'Adding s:% (%) to t:% (%)', si, what[si], ti, ntarget[ti];
     ntarget[ti] := ntarget[ti] - what[si];
   END LOOP;
 
-  RAISE DEBUG '- %', target;
-  RAISE DEBUG '+ %', ntarget;
+  --RAISE DEBUG '- %', target;
+  --RAISE DEBUG '+ %', ntarget;
 
   RETURN ntarget;
 
@@ -166,6 +166,32 @@ END;
 $$
 LANGUAGE 'plpgsql' STRICT;
 -- }
+
+-- Return set of values for given colun in pixel, indexed by timeslot
+-- @param col 0-based attribute index
+CREATE OR REPLACE FUNCTION CDB_TorquePixel_dump(pixel numeric[], col integer)
+RETURNS TABLE (t numeric, v numeric)
+AS
+$$
+DECLARE
+  i integer;
+  vi integer;
+  nslots integer;
+BEGIN
+  nslots := COALESCE(NULLIF(pixel[1],0),1);
+  RAISE DEBUG 'p:% -- nslots:%', pixel, nslots;
+  FOR i IN 1..nslots LOOP
+    RAISE DEBUG 'Index %', i;
+    t := CASE WHEN pixel[1] = 0 THEN NULL ELSE pixel[1+i] END;
+    vi := 2 + pixel[1] + col * nslots + (i-1);
+    RAISE DEBUG 't: %', t;
+    RAISE DEBUG 'vi: %', vi;
+    v := pixel[vi];
+    RETURN NEXT;
+  END LOOP;
+END;
+$$
+LANGUAGE 'plpgsql' STRICT;
 
 -- {
 CREATE OR REPLACE FUNCTION CDB_BuildPyramid(tbl regclass, col text, tcol text, temporal_bins numeric[])
@@ -205,10 +231,7 @@ BEGIN
   -- 1. Create the pyramid table 
   ptab := quote_ident(tblinfo.nsp) || '."' || tblinfo.tab || '_pyramid' || '"';
   sql := 'CREATE TABLE ' || ptab || '(res float8, ext geometry, tres integer, ';
-  IF tcol IS NOT NULL THEN
-      sql := sql || ' t integer,';
-  END IF;
-  sql := sql || 'c int)';
+  sql := sql || 'v numeric[])';
   EXECUTE sql;
 
   --sql := 'SET enable_seqscan = OFF'; EXECUTE sql;
@@ -236,35 +259,30 @@ BEGIN
         || st_xmin(tile_ext) - tile_res/2.0 || ','
         || st_ymin(tile_ext) - tile_res/2.0 || ','
         || tile_res || ',' || tile_res || ')'
-        || ',' || (tile_res/2.0) || ', 1)) as ext, ';
+        || ',' || (tile_res/2.0) || ', 1)) as ext, '
+        || 'CDB_TorquePixel_agg(ARRAY['
+        ;
     IF tcol IS NOT NULL THEN
       sql := sql
-        || 'CASE';
+        || '1::numeric,CASE';
       FOR i IN 1..array_upper(temporal_bins, 1) LOOP
         sql := sql
           || ' WHEN extract(epoch from ' || quote_ident(tcol) || ') < '
           || temporal_bins[i] || ' THEN ' || (i-1);
       END LOOP;
       sql := sql || 'ELSE ' || array_upper(temporal_bins, 1)
-        || ' END as t,';
+        || ' END';
+    ELSE
+      sql := sql || '0::numeric';
     END IF;
     sql := sql
-        || 'count('
-        || quote_ident(col) || ') as c FROM ' || tbl::text
+        || ', 1'
+        -- TODO: add more field summaries
+        || ']) as v FROM ' || tbl::text
         || ' GROUP BY ext'; 
-    IF tcol IS NOT NULL THEN
-      sql := sql || ',  t';
-    END IF;
     sql := sql || '), ins AS ( INSERT INTO ' || ptab
-      || '(res, ext, ';
-    IF tcol IS NOT NULL THEN
-      sql := sql || 't, ';
-    END IF;
-      sql := sql || 'c) SELECT ' || tile_res || ', ext, ';
-    IF tcol IS NOT NULL THEN
-      sql := sql || 't, ';
-    END IF;
-    sql := sql || 'c FROM pixels ) SELECT count(distinct ext) FROM pixels ';
+      || '(res, ext, v) SELECT '
+      || tile_res || ', ext, v FROM pixels ) SELECT count(distinct ext) FROM pixels ';
 
     RAISE DEBUG '%', sql;
 
@@ -339,13 +357,13 @@ BEGIN
 
   sql := 'SELECT ($1).' || quote_ident(gcol) || ' as g';
   IF tcol IS NOT NULL THEN
-    sql := sql || ', CASE ';
+    sql := sql || ', ARRAY[1::numeric, CASE ';
     FOR i IN 1..array_upper(temporal_bins, 1) LOOP
       sql := sql || ' WHEN extract(epoch from ($1).'
         || quote_ident(tcol) || ') < '
         || temporal_bins[i] || ' THEN ' || (i-1);
     END LOOP;
-    sql := sql || 'ELSE ' || array_upper(temporal_bins, 1) || ' END as t';
+    sql := sql || 'ELSE ' || array_upper(temporal_bins, 1) || ' END, 1] as v';
   END IF;
 
   -- Extract info from NEW record
@@ -367,10 +385,11 @@ BEGIN
     IF TG_OP = 'DELETE' OR TG_OP = 'UPDATE' THEN
       -- decrement
       g := ST_SnapToGrid(oldinfo.g, originX, originY, res, res);
-      RAISE DEBUG ' resolution % : % @ %', res, ST_AsText(g), oldinfo.t;
+      RAISE DEBUG ' resolution % : % @ %', res, ST_AsText(g), oldinfo.v;
       -- Updel
-      sql := 'UPDATE ' || ptab || ' set c=c-1 where t='
-        || quote_literal(oldinfo.t) || ' AND ext && ' || quote_literal(oldinfo.g::text);
+      sql := 'UPDATE ' || ptab || ' set v = CDB_TorquePixel_del(v, '
+        || quote_literal(oldinfo.v) || ') WHERE ext && '
+        || quote_literal(oldinfo.g::text);
       RAISE DEBUG ' %', sql;
       EXECUTE sql;
     END IF;
@@ -378,15 +397,16 @@ BEGIN
     IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN
       -- increment
       g := ST_SnapToGrid(newinfo.g, originX, originY, res, res);
-      RAISE DEBUG ' resolution % : % @ %', res, ST_AsText(g), newinfo.t;
+      RAISE DEBUG ' resolution % : % @ %', res, ST_AsText(g), newinfo.v;
       -- Upsert
-      sql := 'WITH upsert as (UPDATE ' || ptab || ' set c=c+1 where t='
-        || quote_literal(newinfo.t) || ' AND ext && ' || quote_literal(newinfo.g::text)
+      sql := 'WITH upsert as (UPDATE ' || ptab || ' set v=CDB_TorquePixel_add(v, '
+        || quote_literal(newinfo.v) 
+        || ') WHERE ext && ' || quote_literal(newinfo.g::text)
         || ' RETURNING ext ) INSERT INTO '
-        || ptab || '(res,ext,t,c) SELECT ' || res || ', ST_Envelope(ST_Buffer('
+        || ptab || '(res,ext,v) SELECT ' || res || ', ST_Envelope(ST_Buffer('
         || quote_literal(newinfo.g::text) || ',' || (res/2.0) || ', 1)), '
-        || quote_literal(newinfo.t)
-        || ', 1 WHERE NOT EXISTS (SELECT * FROM upsert)'; -- 1 is the count
+        || quote_literal(newinfo.v)
+        || ' WHERE NOT EXISTS (SELECT * FROM upsert)'; 
       RAISE DEBUG ' %', sql;
       EXECUTE sql;
     END IF;

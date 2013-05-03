@@ -1,5 +1,4 @@
 \i pyramid.sql
---DROP TRIGGER cdb_maintain_pyramid ON istituti_small;
 DROP TABLE IF EXISTS istituti_small_pyramid CASCADE;
 
 WITH tinfo AS (
@@ -15,23 +14,19 @@ SELECT CDB_BuildPyramid('istituti_small', 'the_geom_webmercator', 'created_at',
 FROM tslots t;
 
 -- Print summary of pixels
-select res, sum(c), count(distinct ext) from istituti_small_pyramid
+-- TODO: compute actual sum with CDB_TorquePixel_dump
+select res, count(ext) from istituti_small_pyramid
 group by res order by res desc;
 
--- Print summary of time slots per resolution
-select res, count(distinct t) from istituti_small_pyramid
-group by res order by res;
-
 -- Count pixels for tile 5,4,3
-SELECT count(distinct ext) FROM istituti_small_pyramid p
+SELECT count(ext) FROM istituti_small_pyramid p
  WHERE p.res = ( select max(res) from istituti_small_pyramid
                  where res < CDB_XYZ_Resolution(3) )
    AND p.ext && CDB_XYZ_Extent(5, 4, 3);
 
 -- Fetch pixels for tile 5,4,3
 SELECT
-  st_xmin(ext) as x, st_ymin(ext) as y,
-  array_agg(t::text || ':' || c::text) as v
+  st_xmin(ext) as x, st_ymin(ext) as y, CDB_TorquePixel_agg(v)
   FROM istituti_small_pyramid p
   WHERE p.res = ( select max(res) from istituti_small_pyramid
                  where res < CDB_XYZ_Resolution(3) )
@@ -41,9 +36,9 @@ SELECT
 WITH inp AS (
   SELECT ST_Buffer('SRID=3857;POINT(0 0)', 10) as e UNION ALL
   SELECT ST_Buffer('SRID=3857;POINT(300 0)', 10)
-) SELECT 'PRE', st_xmin(inp.e), st_ymin(inp.e), i.res, i.t, sum(i.c)
+) SELECT 'PRE', st_xmin(inp.e), st_ymin(inp.e), i.res, count(i.v)
 FROM istituti_small_pyramid i, inp
-WHERE i.ext && inp.e GROUP BY inp.e, res, t ORDER BY inp.e;
+WHERE i.ext && inp.e GROUP BY inp.e, res ORDER BY inp.e;
 
 -- INSERT a row
 INSERT INTO istituti_small (cartodb_id, the_geom_webmercator, created_at)
@@ -54,9 +49,9 @@ INSERT INTO istituti_small (cartodb_id, the_geom_webmercator, created_at)
 WITH inp AS (
   SELECT ST_Buffer('SRID=3857;POINT(0 0)', 10) as e UNION ALL
   SELECT ST_Buffer('SRID=3857;POINT(300 0)', 10)
-) SELECT 'INS', st_xmin(inp.e), st_ymin(inp.e), i.res, i.t, sum(i.c)
+) SELECT 'INS', st_xmin(inp.e), st_ymin(inp.e), i.res, i.v
 FROM istituti_small_pyramid i, inp
-WHERE i.ext && inp.e GROUP BY inp.e, res, t ORDER BY inp.e;
+WHERE i.ext && inp.e ORDER BY inp.e;
 
 -- UPDATE the row
 UPDATE istituti_small SET the_geom_webmercator = 'SRID=3857;POINT(300 0)'
@@ -65,9 +60,9 @@ WHERE cartodb_id = -1;
 WITH inp AS (
   SELECT ST_Buffer('SRID=3857;POINT(0 0)', 10) as e UNION ALL
   SELECT ST_Buffer('SRID=3857;POINT(300 0)', 10)
-) SELECT 'UPD', st_xmin(inp.e), st_ymin(inp.e), i.res, i.t, sum(i.c)
+) SELECT 'UPD', st_xmin(inp.e), st_ymin(inp.e), i.res, i.v
 FROM istituti_small_pyramid i, inp
-WHERE i.ext && inp.e GROUP BY inp.e, res, t ORDER BY inp.e;
+WHERE i.ext && inp.e ORDER BY inp.e;
 
 -- DELETE the rows
 DELETE FROM istituti_small WHERE cartodb_id < 0;
@@ -75,6 +70,14 @@ DELETE FROM istituti_small WHERE cartodb_id < 0;
 WITH inp AS (
   SELECT ST_Buffer('SRID=3857;POINT(0 0)', 10) as e UNION ALL
   SELECT ST_Buffer('SRID=3857;POINT(300 0)', 10)
-) SELECT 'DEL', st_xmin(inp.e), st_ymin(inp.e), i.res, i.t, sum(i.c)
+) SELECT 'DEL', st_xmin(inp.e), st_ymin(inp.e), i.res, i.v
 FROM istituti_small_pyramid i, inp
-WHERE i.ext && inp.e GROUP BY inp.e, res, t ORDER BY inp.e;
+WHERE i.ext && inp.e ORDER BY inp.e;
+
+--  now with no time
+
+DROP TABLE IF EXISTS istituti_small_pyramid CASCADE;
+SELECT CDB_BuildPyramid('istituti_small', 'the_geom_webmercator', NULL, NULL);
+
+select res, count(ext) from istituti_small_pyramid
+group by res order by res desc;
