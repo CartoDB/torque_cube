@@ -17,6 +17,11 @@ DECLARE
   ntslots integer;
   ntarget numeric[];
 BEGIN
+
+  -- Make aggregate friendly
+  IF target IS NULL THEN RETURN what; END IF;
+  IF what IS NULL THEN RETURN target; END IF;
+
   ntslots := target[1];
   svaloff := 2 + what[1];
 
@@ -76,8 +81,15 @@ BEGIN
 
 END;
 $$
-LANGUAGE 'plpgsql' STRICT;
+LANGUAGE 'plpgsql';
 -- }
+
+DROP AGGREGATE IF EXISTS CDB_TorquePixel_sum (numeric[]);
+CREATE AGGREGATE CDB_TorquePixel_sum (numeric[])
+(
+  sfunc = CDB_TorquePixel_add,
+  stype = numeric[]
+);
 
 -- Delete the value of a torque pixel (what) from another (target)
 --
