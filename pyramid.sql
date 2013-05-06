@@ -252,7 +252,8 @@ BEGIN
 
     resolutions := resolutions || tile_res;
 
-    sql := 'WITH pixels AS ( SELECT '
+    sql := ' INSERT INTO ' || ptab
+        || '(res, ext, v) SELECT '
         || tile_res
         || ', ST_Envelope(ST_Buffer('
         || 'ST_SnapToGrid(' || quote_ident(col) || ', '
@@ -280,13 +281,12 @@ BEGIN
         -- TODO: add more field summaries
         || ']) as v FROM ' || tbl::text
         || ' GROUP BY ext'; 
-    sql := sql || '), ins AS ( INSERT INTO ' || ptab
-      || '(res, ext, v) SELECT '
-      || tile_res || ', ext, v FROM pixels ) SELECT count(distinct ext) FROM pixels ';
 
     RAISE DEBUG '%', sql;
 
-    EXECUTE sql INTO pixel_vals;
+    EXECUTE sql;
+
+    GET DIAGNOSTICS pixel_vals := ROW_COUNT;
 
     RAISE DEBUG '% pixels with resolution %', pixel_vals, tile_res;
 
@@ -363,7 +363,7 @@ BEGIN
         || quote_ident(tcol) || ') < '
         || temporal_bins[i] || ' THEN ' || (i-1);
     END LOOP;
-    sql := sql || 'ELSE ' || array_upper(temporal_bins, 1) || ' END, 1] as v';
+    sql := sql || ' ELSE ' || array_upper(temporal_bins, 1) || ' END, 1] as v';
   END IF;
 
   -- Extract info from NEW record
