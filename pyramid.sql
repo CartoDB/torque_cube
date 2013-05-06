@@ -179,13 +179,13 @@ DECLARE
   nslots integer;
 BEGIN
   nslots := COALESCE(NULLIF(pixel[1],0),1);
-  RAISE DEBUG 'p:% -- nslots:%', pixel, nslots;
+  --RAISE DEBUG 'p:% -- nslots:%', pixel, nslots;
   FOR i IN 1..nslots LOOP
-    RAISE DEBUG 'Index %', i;
+    -- RAISE DEBUG 'Index %', i;
     t := CASE WHEN pixel[1] = 0 THEN NULL ELSE pixel[1+i] END;
     vi := 2 + pixel[1] + col * nslots + (i-1);
-    RAISE DEBUG 't: %', t;
-    RAISE DEBUG 'vi: %', vi;
+    --RAISE DEBUG 't: %', t;
+    --RAISE DEBUG 'vi: %', vi;
     v := pixel[vi];
     RETURN NEXT;
   END LOOP;
@@ -271,7 +271,7 @@ BEGIN
           || ' WHEN extract(epoch from ' || quote_ident(tcol) || ') < '
           || temporal_bins[i] || ' THEN ' || (i-1);
       END LOOP;
-      sql := sql || 'ELSE ' || array_upper(temporal_bins, 1)
+      sql := sql || ' ELSE ' || array_upper(temporal_bins, 1)
         || ' END';
     ELSE
       sql := sql || '0::numeric';
