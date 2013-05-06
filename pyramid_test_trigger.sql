@@ -14,8 +14,8 @@ SELECT CDB_BuildPyramid('istituti_small', 'the_geom_webmercator', 'created_at',
 FROM tslots t;
 
 -- Print summary of pixels
--- TODO: compute actual sum with CDB_TorquePixel_dump
-select res, count(ext) from istituti_small_pyramid
+select res, count(ext), sum((select sum(v) from cdb_torquepixel_dump(v,0)))
+from istituti_small_pyramid
 group by res order by res desc;
 
 -- Count pixels for tile 5,4,3
