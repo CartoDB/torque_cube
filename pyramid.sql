@@ -44,10 +44,10 @@ BEGIN
     END LOOP;
     IF tvaloff IS NULL THEN
       -- need to make space for the new value
-      ntarget := ARRAY[ target[1] + 1 ] || target[2:1+ntslots] || ARRAY[tslot::numeric];
+      ntarget := target[1] + 1 ::numeric || target[2:1+ntslots] || tslot::numeric;
       FOR i IN 0..(array_upper(what, 1) - svaloff) LOOP
         ti := 2 + ntslots + ( ntslots * i );
-        ntarget := ntarget || target[ti:(ti+(ntslots-1))] || ARRAY[ 0::numeric ];
+        ntarget := ntarget || target[ti:(ti+(ntslots-1))] || 0::numeric;
       END LOOP;
       tvaloff := 1 + 2 * ntarget[1];
       ntslots := ntslots + 1;
