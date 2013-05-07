@@ -397,7 +397,7 @@ BEGIN
     originX := st_xmin(full_extent) - res/2.0;
     originY := st_ymin(full_extent) - res/2.0;
 
-    RAISE DEBUG 'oldinfo: %', oldinfo;
+    --RAISE DEBUG 'oldinfo: %', oldinfo;
   END IF;
 
   -- Do nothing on UPDATE if old and new fields of interest
