@@ -15,10 +15,13 @@ DECLARE
   tslot integer;
   ntslots integer;
   ntarget numeric[];
-  snvals integer;
-  sntslots integer;
+  snvals integer; -- number of values in source
+  snslots integer; -- number of time slots in source
+  tnslots integer; -- number of time slots in target
   ttslot integer[]; 
   missing integer;
+  svaloff integer; -- source values offset
+  tvaloff integer; -- target values offset
 BEGIN
 
   -- Make aggregate friendly
@@ -30,7 +33,6 @@ BEGIN
   END IF;
 
   snvals := floor( (array_upper(what, 1) - 1 - what[1]) / COALESCE(NULLIF(what[1],0),1) );
-  sntslots := what[1];
 
   --RAISE WARNING 'Source has % timeslots and % values', sntslots, snvals;
 
@@ -71,10 +73,14 @@ BEGIN
   --RAISE WARNING 'source:%, target:%, ttslot:% missing:%', what, target, ttslot, missing;
   --RAISE WARNING 'ntarget:%', ntarget;
 
+  svaloff := 2 + what[1];
+  tvaloff := 2 + ntarget[1];
+  snslots := COALESCE(NULLIF(what[1],0),1);
+  tnslots := COALESCE(NULLIF(ntarget[1],0),1);
   FOR i IN 0..snvals-1 LOOP -- for each value 
-    FOR j IN 0..(COALESCE(NULLIF(what[1],0),1))-1 LOOP -- for each timeslot in source
-      si := 2 + what[1]    + j + ( i*COALESCE(NULLIF(what[1],0),1) );
-      ti := 2 + ntarget[1] + COALESCE(ttslot[j+1],0) + ( i * COALESCE(NULLIF(ntarget[1],0),1) );
+    FOR j IN 0..snslots-1 LOOP -- for each timeslot in source
+      si := svaloff + j + ( i * snslots );
+      ti := tvaloff + COALESCE(ttslot[j+1],0) + ( i * tnslots );
       --RAISE DEBUG 'Adding s:% (%) to t:% (%) -- ttslot[%]=%', si, what[si], ti, ntarget[ti], j+1,ttslot[j+1];
       ntarget[ti] := ntarget[ti] + what[si];
     END LOOP;
