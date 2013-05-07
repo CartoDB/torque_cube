@@ -322,7 +322,7 @@ BEGIN
 
   sql := 'CREATE TRIGGER cdb_maintain_pyramid AFTER INSERT OR UPDATE OR DELETE ON '
     || tbl || ' FOR EACH ROW EXECUTE PROCEDURE _CDB_PyramidTrigger('
-    || col || ',' || COALESCE(tcol, quote_literal('null')) || ',' || quote_literal(ptab) || ','
+    || col || ',' || quote_literal(COALESCE(tcol, '')) || ',' || quote_literal(ptab) || ','
     || quote_literal(tile_ext::text) || ','
     || quote_literal(resolutions::text) || ','
     || quote_literal(COALESCE(temporal_bins, '{}')::text) || ')';
@@ -367,16 +367,23 @@ BEGIN
   resolutions := TG_ARGV[4];
   temporal_bins := TG_ARGV[5];
 
+  -- trigger procedures cannot take NULL, so we assume empty string is a null
+  IF tcol = '' THEN tcol := null; END IF;
+
   sql := 'SELECT ($1).' || quote_ident(gcol) || ' as g';
+  sql := sql || ', ARRAY[';
   IF tcol IS NOT NULL THEN
-    sql := sql || ', ARRAY[1::numeric, CASE ';
+    sql := sql || '1::numeric, CASE ';
     FOR i IN 1..array_upper(temporal_bins, 1) LOOP
       sql := sql || ' WHEN extract(epoch from ($1).'
         || quote_ident(tcol) || ') < '
         || temporal_bins[i] || ' THEN ' || (i-1);
     END LOOP;
-    sql := sql || ' ELSE ' || array_upper(temporal_bins, 1) || ' END, 1] as v';
+    sql := sql || ' ELSE ' || array_upper(temporal_bins, 1) || ' END';
+  ELSE
+    sql := sql || '0::numeric';
   END IF;
+  sql := sql || ',1] as v'; -- TODO: add more aggregates
 
   -- Extract info from NEW record
   IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN
@@ -389,6 +396,8 @@ BEGIN
     res := resolutions[1]; -- we assume first element is highest (min) 
     originX := st_xmin(full_extent) - res/2.0;
     originY := st_ymin(full_extent) - res/2.0;
+
+    RAISE DEBUG 'oldinfo: %', oldinfo;
   END IF;
 
   -- Do nothing on UPDATE if old and new fields of interest
@@ -405,37 +414,41 @@ BEGIN
   END IF;
 
   IF TG_OP = 'DELETE' OR TG_OP = 'UPDATE' THEN
-    -- decrement
-    sql := 'UPDATE ' || ptab || ' set v = CDB_TorquePixel_del(v, '
-      || quote_literal(oldinfo.v) || ') WHERE ext && '
-      || quote_literal(oldinfo.g::text);
-    -- RAISE DEBUG ' %', sql;
-    EXECUTE sql;
+    IF oldinfo.g IS NOT NULL THEN
+      -- decrement
+      sql := 'UPDATE ' || ptab || ' set v = CDB_TorquePixel_del(v, '
+        || quote_literal(oldinfo.v) || ') WHERE ext && '
+        || quote_literal(oldinfo.g::text);
+      RAISE DEBUG ' %', sql;
+      EXECUTE sql;
+    END IF;
   END IF;
 
   IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN
-    FOR i IN 1..array_upper(resolutions,1) LOOP
-      res := resolutions[i];
-      RAISE DEBUG ' updating resolution %', res;
-      originX := st_xmin(full_extent) - res/2.0;
-      originY := st_ymin(full_extent) - res/2.0;
+    IF newinfo.g IS NOT NULL THEN
+      FOR i IN 1..array_upper(resolutions,1) LOOP
+        res := resolutions[i];
+        RAISE DEBUG ' updating resolution %', res;
+        originX := st_xmin(full_extent) - res/2.0;
+        originY := st_ymin(full_extent) - res/2.0;
 
-      -- increment
-      g := ST_SnapToGrid(newinfo.g, originX, originY, res, res);
-      RAISE DEBUG ' resolution % : % @ %', res, ST_AsText(g), newinfo.v;
-      -- Upsert
-      sql := 'WITH upsert as (UPDATE ' || ptab || ' set v=CDB_TorquePixel_add(v, '
-        || quote_literal(newinfo.v) 
-        || ') WHERE res = ' || res || ' AND ext && '
-        || quote_literal(newinfo.g::text)
-        || ' RETURNING ext ) INSERT INTO '
-        || ptab || '(res,ext,v) SELECT ' || res || ', ST_Envelope(ST_Buffer('
-        || quote_literal(newinfo.g::text) || ',' || (res/2.0) || ', 1)), '
-        || quote_literal(newinfo.v)
-        || ' WHERE NOT EXISTS (SELECT * FROM upsert)'; 
-      RAISE DEBUG ' %', sql;
-      EXECUTE sql;
-    END LOOP;
+        -- increment
+        g := ST_SnapToGrid(newinfo.g, originX, originY, res, res);
+        RAISE DEBUG ' resolution % : % @ %', res, ST_AsText(g), newinfo.v;
+        -- Upsert
+        sql := 'WITH upsert as (UPDATE ' || ptab || ' set v=CDB_TorquePixel_add(v, '
+          || quote_literal(newinfo.v) 
+          || ') WHERE res = ' || res || ' AND ext && '
+          || quote_literal(newinfo.g::text)
+          || ' RETURNING ext ) INSERT INTO '
+          || ptab || '(res,ext,v) SELECT ' || res || ', ST_Envelope(ST_Buffer('
+          || quote_literal(newinfo.g::text) || ',' || (res/2.0) || ', 1)), '
+          || quote_literal(newinfo.v)
+          || ' WHERE NOT EXISTS (SELECT * FROM upsert)'; 
+        RAISE DEBUG ' %', sql;
+        EXECUTE sql;
+      END LOOP;
+    END IF;
   END IF;
 
   RETURN NULL;
