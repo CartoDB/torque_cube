@@ -9,69 +9,75 @@ RETURNS numeric[] AS
 $$
 DECLARE
   i integer;
+  j integer;
   si integer;
   ti integer;
-  tvaloff integer;
-  svaloff integer;
   tslot integer;
   ntslots integer;
   ntarget numeric[];
+  snvals integer;
+  sntslots integer;
+  ttslot integer[]; 
+  missing integer;
 BEGIN
 
   -- Make aggregate friendly
   IF target IS NULL THEN RETURN what; END IF;
   IF what IS NULL THEN RETURN target; END IF;
 
-  ntslots := target[1];
-  svaloff := 2 + what[1];
-
-  IF what[1] > 1 THEN
-    RAISE EXCEPTION 'Multi time slots source pixel value unsupported';
+  IF ( target[1] = 0 ) != ( what[1] = 0 ) THEN
+    RAISE EXCEPTION 'Cannot add timeless and timed pixel values';
   END IF;
 
-  IF ntslots > 0 THEN
-    -- target has time slots, find our ones
-    IF what[1] != 1 THEN
-      RAISE EXCEPTION 'Cannot increment a time-based pixel value by a timeless value';
-    END IF;
-    tslot := what[2];
-    FOR i IN 2..target[1]+1 LOOP
-      IF target[i] = tslot THEN
-        ntarget := target; 
-        tvaloff := ntslots + i;
+  snvals := floor( (array_upper(what, 1) - 1 - what[1]) / COALESCE(NULLIF(what[1],0),1) );
+  sntslots := what[1];
+
+  --RAISE WARNING 'Source has % timeslots and % values', sntslots, snvals;
+
+  ntslots := target[1];
+
+  -- for each source value, find time slot offset in target, possibly null
+  missing := 0;
+  FOR si IN 0..what[1]-1 LOOP
+    tslot := what[2+si];
+    --RAISE DEBUG 'Looking for timeslot %', tslot;
+    ti := NULL;
+    FOR i IN 0..target[1]-1 LOOP
+      IF target[2+i] = tslot THEN
+        ti := i;
         EXIT;
       END IF;
     END LOOP;
-    IF tvaloff IS NULL THEN
-      -- need to make space for the new value
-      ntarget := target[1] + 1 ::numeric || target[2:1+ntslots] || tslot::numeric;
-      FOR i IN 0..(array_upper(what, 1) - svaloff) LOOP
-        ti := 2 + ntslots + ( ntslots * i );
-        ntarget := ntarget || target[ti:(ti+(ntslots-1))] || 0::numeric;
-      END LOOP;
-      tvaloff := 1 + 2 * ntarget[1];
-      ntslots := ntslots + 1;
+    --RAISE DEBUG 'Timeslot % found in target slot %', tslot, ti;
+    IF ti IS NOT NULL THEN
+      ttslot[1+si] := ti;
+    ELSE
+      ttslot[1+si] := ntslots + missing;
+      missing := missing + 1;
     END IF;
+  END LOOP;
+
+  IF missing > 0 THEN
+    -- need to make space for the new values
+    ntarget := target[1] + missing ::numeric || target[2:1+ntslots] || what[2:1+what[1]];
+    FOR i IN 0..snvals-1 LOOP
+      ti := 2 + ntslots + ( ntslots * i );
+      ntarget := ntarget || target[ti:(ti+(ntslots-1))] || array_fill(0::numeric, ARRAY[missing]);
+    END LOOP;
   ELSE
-    -- target has no time slots
-    IF what[1] != 0 THEN
-      RAISE WARNING 'Discarding time slot from value (target is not time-based)';
-    END IF;
-    ntarget := target; 
-    tvaloff := 2;
+    ntarget := target;
   END IF;
 
-  -- RAISE DEBUG 'Source: % (val off %)', what, svaloff;
-  -- RAISE DEBUG 'Target: %', target;
-  -- RAISE DEBUG 'Ntarget: % (val off %, ntslots %)', ntarget, tvaloff, ntslots;
-  -- RAISE DEBUG 'Value offsets: s=% t=%', svaloff, tvaloff;
+  --RAISE WARNING 'source:%, target:%, ttslot:% missing:%', what, target, ttslot, missing;
+  --RAISE WARNING 'ntarget:%', ntarget;
 
-  -- TODO: add each value of source to value of target
-  FOR i IN 0..(array_upper(what, 1) - svaloff) LOOP
-    si := svaloff+i;
-    ti := tvaloff+(i*COALESCE(NULLIF(ntslots,0),1)); 
-    --RAISE DEBUG 'Adding s:% (%) to t:% (%)', si, what[si], ti, ntarget[ti];
-    ntarget[ti] := ntarget[ti] + what[si];
+  FOR i IN 0..snvals-1 LOOP -- for each value 
+    FOR j IN 0..(COALESCE(NULLIF(what[1],0),1))-1 LOOP -- for each timeslot in source
+      si := 2 + what[1]    + j + ( i*COALESCE(NULLIF(what[1],0),1) );
+      ti := 2 + ntarget[1] + COALESCE(ttslot[j+1],0) + ( i * COALESCE(NULLIF(ntarget[1],0),1) );
+      --RAISE DEBUG 'Adding s:% (%) to t:% (%) -- ttslot[%]=%', si, what[si], ti, ntarget[ti], j+1,ttslot[j+1];
+      ntarget[ti] := ntarget[ti] + what[si];
+    END LOOP;
   END LOOP;
 
   --RAISE DEBUG '- %', target;
