@@ -9,12 +9,15 @@ WITH tinfo AS (
   SELECT array_agg((t.min + ( (t.max-t.min) / 16 ) * i)::numeric) as slots
   FROM tinfo t, generate_series(1, 15) i
 )
-SELECT CDB_BuildPyramid('istituti_small', 'the_geom_webmercator', 'created_at',
+SELECT CDB_BuildPyramid('istituti_small', 'the_geom_webmercator', '{val}', 'created_at',
                         t.slots)
 FROM tslots t;
 
 -- Print summary of pixels
-select res, count(ext), sum((select sum(v) from cdb_torquepixel_dump(v,0)))
+select count(val) as count0, sum(val) as v0 from  istituti_small;
+select res, count(ext),
+  sum((select sum(v) from cdb_torquepixel_dump(v,0))) as sum,
+  sum((select sum(v) from cdb_torquepixel_dump(v,1))) as v
 from istituti_small_pyramid
 group by res order by res desc;
 
@@ -41,10 +44,10 @@ FROM istituti_small_pyramid i, inp
 WHERE i.ext && inp.e GROUP BY inp.e, res ORDER BY inp.e;
 
 -- INSERT a row
-INSERT INTO istituti_small (cartodb_id, the_geom_webmercator, created_at)
-  VALUES ( -1, 'SRID=3857;POINT(0 0)', '2013-05-02 17:17:17' );
-INSERT INTO istituti_small (cartodb_id, the_geom_webmercator, created_at)
-  VALUES ( -2, 'SRID=3857;POINT(0 1)', '2013-05-02 18:18:18' );
+INSERT INTO istituti_small (cartodb_id, the_geom_webmercator, created_at, val)
+  VALUES ( -1, 'SRID=3857;POINT(0 0)', '2013-05-02 17:17:17', 4 );
+INSERT INTO istituti_small (cartodb_id, the_geom_webmercator, created_at, val)
+  VALUES ( -2, 'SRID=3857;POINT(0 1)', '2013-05-02 18:18:18', 5 );
 
 WITH inp AS (
   SELECT ST_Buffer('SRID=3857;POINT(0 0)', 10) as e UNION ALL
@@ -77,7 +80,7 @@ WHERE i.ext && inp.e ORDER BY inp.e;
 --  now with no time
 
 DROP TABLE IF EXISTS istituti_small_pyramid CASCADE;
-SELECT CDB_BuildPyramid('istituti_small', 'the_geom_webmercator', NULL, NULL);
+SELECT CDB_BuildPyramid('istituti_small', 'the_geom_webmercator', NULL, NULL, NULL);
 
 select res, count(ext) from istituti_small_pyramid
 group by res order by res desc;

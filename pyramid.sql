@@ -206,7 +206,16 @@ $$
 LANGUAGE 'plpgsql' STRICT;
 
 -- {
-CREATE OR REPLACE FUNCTION CDB_BuildPyramid(tbl regclass, col text, tcol text, temporal_bins numeric[])
+-- @param tbl table identifier (passing its name would work)
+-- @param col geometry column
+-- @param fields array of field names to aggregate (sum) in output pixels,
+--        can be NULL for none.
+-- @param tcol time column, expected to be timestamp, can be NULL
+-- @temporal_bins array of epoch values to separate time slots
+--                (lower to higher), can be NULL
+-- 
+DROP FUNCTION IF EXISTS CDB_BuildPyramid(tbl regclass, col text, tcol text, temporal_bins numeric[]);
+CREATE OR REPLACE FUNCTION CDB_BuildPyramid(tbl regclass, col text, fields text[], tcol text, temporal_bins numeric[])
 RETURNS void AS
 $$
 DECLARE
@@ -288,9 +297,16 @@ BEGIN
     ELSE
       sql := sql || '0::numeric';
     END IF;
-    sql := sql
-        || ', 1'
-        -- TODO: add more field summaries
+    sql := sql || ', 1'; -- count
+
+    IF fields IS NOT NULL THEN
+      -- add more field summaries
+      FOR rec IN SELECT unnest(fields) f LOOP
+        sql := sql || ',' || quote_ident(rec.f);
+      END LOOP;
+    END IF;
+
+    sql := sql 
         || ']) as v FROM ' || tbl::text
         || ' GROUP BY ext'; 
 
@@ -325,7 +341,9 @@ BEGIN
     || col || ',' || quote_literal(COALESCE(tcol, '')) || ',' || quote_literal(ptab) || ','
     || quote_literal(tile_ext::text) || ','
     || quote_literal(resolutions::text) || ','
-    || quote_literal(COALESCE(temporal_bins, '{}')::text) || ')';
+    || quote_literal(COALESCE(temporal_bins, '{}')::text) || ','
+    || quote_literal(COALESCE(fields, '{}')::text)
+    || ')';
   RAISE DEBUG 'TRIGGER CREATION: %', sql;
   EXECUTE sql;
 
@@ -341,6 +359,7 @@ RETURNS TRIGGER AS
 $$
 DECLARE
   gcol text;
+  fields text[];
   tcol text;
   ptab text;
   full_extent geometry;
@@ -354,6 +373,7 @@ DECLARE
   originY float8;
   oldinfo RECORD;
   newinfo RECORD;
+  rec RECORD;
 BEGIN
 
   IF TG_NARGS < 6 THEN
@@ -366,6 +386,9 @@ BEGIN
   full_extent := TG_ARGV[3];
   resolutions := TG_ARGV[4];
   temporal_bins := TG_ARGV[5];
+  fields := TG_ARGV[6];
+
+  RAISE DEBUG 'Fields: %', fields;
 
   -- trigger procedures cannot take NULL, so we assume empty string is a null
   IF tcol = '' THEN tcol := null; END IF;
@@ -383,7 +406,11 @@ BEGIN
   ELSE
     sql := sql || '0::numeric';
   END IF;
-  sql := sql || ',1] as v'; -- TODO: add more aggregates
+  sql := sql || ',1';
+  FOR rec IN SELECT unnest(fields) f LOOP
+    sql := sql || ', ($1).' || quote_ident(rec.f);
+  END LOOP;
+  sql := sql || '] as v';
 
   -- Extract info from NEW record
   IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN
