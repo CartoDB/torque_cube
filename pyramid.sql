@@ -19,7 +19,7 @@ DECLARE
   snslots integer; -- number of time slots in source
   tnslots integer; -- number of time slots in target
   ttslot integer[]; 
-  missing integer;
+  missing numeric[];
   svaloff integer; -- source values offset
   tvaloff integer; -- target values offset
 BEGIN
@@ -39,10 +39,10 @@ BEGIN
   ntslots := target[1];
 
   -- for each source value, find time slot offset in target, possibly null
-  missing := 0;
+  missing := ARRAY[]::numeric[];
   FOR si IN 0..what[1]-1 LOOP
     tslot := what[2+si];
-    --RAISE DEBUG 'Looking for timeslot %', tslot;
+    -- RAISE DEBUG 'Looking for timeslot %', tslot;
     ti := NULL;
     FOR i IN 0..target[1]-1 LOOP
       IF target[2+i] = tslot THEN
@@ -50,21 +50,21 @@ BEGIN
         EXIT;
       END IF;
     END LOOP;
-    --RAISE DEBUG 'Timeslot % found in target slot %', tslot, ti;
+    -- RAISE DEBUG 'Timeslot % found in target slot %', tslot, ti;
     IF ti IS NOT NULL THEN
       ttslot[1+si] := ti;
     ELSE
-      ttslot[1+si] := ntslots + missing;
-      missing := missing + 1;
+      ttslot[1+si] := ntslots + COALESCE(array_upper(missing, 1), 0);
+      missing := missing || tslot::numeric;
     END IF;
   END LOOP;
 
-  IF missing > 0 THEN
+  IF array_upper(missing, 1) > 0 THEN
     -- need to make space for the new values
-    ntarget := target[1] + missing ::numeric || target[2:1+ntslots] || what[2:1+what[1]];
+    ntarget := (target[1] + array_upper(missing, 1)) ::numeric || target[2:1+ntslots] || missing;
     FOR i IN 0..snvals-1 LOOP
       ti := 2 + ntslots + ( ntslots * i );
-      ntarget := ntarget || target[ti:(ti+(ntslots-1))] || array_fill(0::numeric, ARRAY[missing]);
+      ntarget := ntarget || target[ti:(ti+(ntslots-1))] || array_fill(0::numeric, ARRAY[array_upper(missing, 1)]);
     END LOOP;
   ELSE
     ntarget := target;
@@ -81,13 +81,13 @@ BEGIN
     FOR j IN 0..snslots-1 LOOP -- for each timeslot in source
       si := svaloff + j + ( i * snslots );
       ti := tvaloff + COALESCE(ttslot[j+1],0) + ( i * tnslots );
-      --RAISE DEBUG 'Adding s:% (%) to t:% (%) -- ttslot[%]=%', si, what[si], ti, ntarget[ti], j+1,ttslot[j+1];
+      -- RAISE DEBUG 'Adding s:% (%) to t:% (%) -- ttslot[%]=%', si, what[si], ti, ntarget[ti], j+1,ttslot[j+1];
       ntarget[ti] := ntarget[ti] + what[si];
     END LOOP;
   END LOOP;
 
-  --RAISE DEBUG '- %', target;
-  --RAISE DEBUG '+ %', ntarget;
+  -- RAISE DEBUG '- %', target;
+  -- RAISE DEBUG '+ %', ntarget;
 
   RETURN ntarget;
 
