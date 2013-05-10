@@ -233,7 +233,7 @@ DECLARE
 BEGIN
 
   -- Setup parameters  (higher number to stop first)
-  maxpix := 65535; -- 256x256 are enough
+  maxpix := 1024; -- 32x32
 
   -- Extract table info
   WITH info AS (
@@ -276,48 +276,78 @@ BEGIN
   -- TODO: re-compute tile_ext to always be the full webmercator extent
   --       or better yet take it as a parameter
 
-  -- TODO: compute upper levels from lower ones, using ST_Covers
+  resolutions := resolutions || tile_res;
 
-  LOOP
+  sql := ' INSERT INTO ' || ptab
+      || '(res, ext, v) SELECT '
+      || tile_res
+      || ', ST_Envelope(ST_Buffer('
+      || 'ST_SnapToGrid(' || quote_ident(col) || ', '
+      || st_xmin(tile_ext) - tile_res/2.0 || ','
+      || st_ymin(tile_ext) - tile_res/2.0 || ','
+      || tile_res || ',' || tile_res || ')'
+      || ',' || (tile_res/2.0) || ', 1)) as ext, '
+      || 'CDB_TorquePixel_agg(ARRAY['
+      ;
+  IF tcol IS NOT NULL THEN
+    sql := sql
+      || '1::numeric,CASE';
+    FOR i IN 1..array_upper(temporal_bins, 1) LOOP
+      sql := sql
+        || ' WHEN extract(epoch from ' || quote_ident(tcol) || ') < '
+        || temporal_bins[i] || ' THEN ' || (i-1);
+    END LOOP;
+    sql := sql || ' ELSE ' || array_upper(temporal_bins, 1)
+      || ' END';
+  ELSE
+    sql := sql || '0::numeric';
+  END IF;
+  sql := sql || ', 1'; -- count
 
-    resolutions := resolutions || tile_res;
+  IF fields IS NOT NULL THEN
+    -- add more field summaries
+    FOR rec IN SELECT unnest(fields) f LOOP
+      sql := sql || ',' || quote_ident(rec.f);
+    END LOOP;
+  END IF;
+
+  sql := sql 
+      || ']) as v FROM ' || tbl::text
+      || ' GROUP BY ext'; 
+
+  RAISE DEBUG '%', sql;
+
+  EXECUTE sql;
+
+  GET DIAGNOSTICS pixel_vals := ROW_COUNT;
+
+  RAISE DEBUG '% pixels with resolution %', pixel_vals, tile_res;
+
+  -- create indices
+
+  sql := 'CREATE INDEX ON ' || ptab || '(res)';
+  EXECUTE sql;
+
+  sql := 'CREATE INDEX ON ' || ptab ||' using gist (ext)';
+  EXECUTE sql;
+
+  -- compute upper levels from lower ones
+
+  WHILE pixel_vals > maxpix LOOP
 
     sql := ' INSERT INTO ' || ptab
         || '(res, ext, v) SELECT '
-        || tile_res
+        || tile_res * 2
         || ', ST_Envelope(ST_Buffer('
-        || 'ST_SnapToGrid(' || quote_ident(col) || ', '
-        || st_xmin(tile_ext) - tile_res/2.0 || ','
-        || st_ymin(tile_ext) - tile_res/2.0 || ','
-        || tile_res || ',' || tile_res || ')'
-        || ',' || (tile_res/2.0) || ', 1)) as ext, '
-        || 'CDB_TorquePixel_agg(ARRAY['
-        ;
-    IF tcol IS NOT NULL THEN
-      sql := sql
-        || '1::numeric,CASE';
-      FOR i IN 1..array_upper(temporal_bins, 1) LOOP
-        sql := sql
-          || ' WHEN extract(epoch from ' || quote_ident(tcol) || ') < '
-          || temporal_bins[i] || ' THEN ' || (i-1);
-      END LOOP;
-      sql := sql || ' ELSE ' || array_upper(temporal_bins, 1)
-        || ' END';
-    ELSE
-      sql := sql || '0::numeric';
-    END IF;
-    sql := sql || ', 1'; -- count
-
-    IF fields IS NOT NULL THEN
-      -- add more field summaries
-      FOR rec IN SELECT unnest(fields) f LOOP
-        sql := sql || ',' || quote_ident(rec.f);
-      END LOOP;
-    END IF;
-
-    sql := sql 
-        || ']) as v FROM ' || tbl::text
-        || ' GROUP BY ext'; 
+        || 'ST_SnapToGrid(ST_Centroid(ext), '
+        || st_xmin(tile_ext) - tile_res || ','
+        || st_ymin(tile_ext) - tile_res || ','
+        || tile_res * 2 || ',' || tile_res * 2
+        || '), ' || tile_res
+        || ')) as ext, CDB_TorquePixel_agg(v) FROM '
+        || ptab || ' WHERE res = ' || tile_res 
+        || 'GROUP BY ext '
+    ; 
 
     RAISE DEBUG '%', sql;
 
@@ -325,11 +355,9 @@ BEGIN
 
     GET DIAGNOSTICS pixel_vals := ROW_COUNT;
 
-    RAISE DEBUG '% pixels with resolution %', pixel_vals, tile_res;
-
-    IF pixel_vals <= maxpix THEN EXIT; END IF;
-
     tile_res := tile_res * 2;
+
+    RAISE DEBUG '% pixels with resolution %', pixel_vals, tile_res;
 
   END LOOP;
 
@@ -339,15 +367,6 @@ BEGIN
   sql := 'ANALYZE ' || ptab;
   RAISE DEBUG '%', sql;
   EXECUTE sql;
-
-  -- Create indices
-
-  sql := 'CREATE INDEX ON ' || ptab || '(res)';
-  EXECUTE sql;
-
-  sql := 'CREATE INDEX ON ' || ptab ||' using gist (ext)';
-  EXECUTE sql;
-
 
   -- 3. Setup triggers to maintain the pyramid table
   --    and indices on the pyramid table
