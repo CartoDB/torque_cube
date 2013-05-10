@@ -251,11 +251,20 @@ BEGIN
 
   -- 1. Create the pyramid table 
   ptab := quote_ident(tblinfo.nsp) || '."' || tblinfo.tab || '_pyramid' || '"';
-  sql := 'CREATE TABLE ' || ptab || '(res float8, ext geometry, tres integer, ';
-  sql := sql || 'v numeric[])';
+  sql := 'CREATE TABLE ' || ptab || '(res float8, ext geometry, v numeric[])';
   EXECUTE sql;
-
-  --sql := 'SET enable_seqscan = OFF'; EXECUTE sql;
+  -- if the source table can be SELECT'ed by publicuser/tileuser,
+  -- grant that privilege to the pyramid as well
+  sql := 'SELECT u, has_table_privilege(u, $1, ''SELECT'') p FROM ( VALUES ($2,$3) ) f(u)';
+  RAISE DEBUG '%', sql;
+  FOR rec IN EXECUTE sql USING tbl::text, 'publicuser', 'tileuser' LOOP
+    RAISE DEBUG 'Privilege: %', rec.p;
+    IF rec.p THEN
+      sql := 'GRANT SELECT ON ' || ptab::text || ' TO ' || rec.u;
+      RAISE DEBUG '%', sql;
+      EXECUTE sql;
+    END IF;
+  END LOOP;
 
   -- 2. Start from bottom-level summary and add summarize up to top
   --    Stop condition is when we have less than maxpix "pixels"
@@ -324,9 +333,19 @@ BEGIN
 
   END LOOP;
 
+
   -- Compute stats
+
   sql := 'ANALYZE ' || ptab;
   RAISE DEBUG '%', sql;
+  EXECUTE sql;
+
+  -- Create indices
+
+  sql := 'CREATE INDEX ON ' || ptab || '(res)';
+  EXECUTE sql;
+
+  sql := 'CREATE INDEX ON ' || ptab ||' using gist (ext)';
   EXECUTE sql;
 
 
