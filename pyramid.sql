@@ -214,7 +214,6 @@ LANGUAGE 'plpgsql' STRICT;
 -- @temporal_bins array of epoch values to separate time slots
 --                (lower to higher), can be NULL
 -- 
-DROP FUNCTION IF EXISTS CDB_BuildPyramid(tbl regclass, col text, tcol text, temporal_bins numeric[]);
 CREATE OR REPLACE FUNCTION CDB_BuildPyramid(tbl regclass, col text, fields text[], tcol text, temporal_bins numeric[])
 RETURNS void AS
 $$
@@ -344,9 +343,9 @@ BEGIN
         || st_ymin(tile_ext) - tile_res || ','
         || tile_res * 2 || ',' || tile_res * 2
         || '), ' || tile_res
-        || ')) as ext, CDB_TorquePixel_agg(v) FROM '
+        || ')) as new_ext, CDB_TorquePixel_agg(v) FROM '
         || ptab || ' WHERE res = ' || tile_res 
-        || 'GROUP BY ext '
+        || ' GROUP BY new_ext '
     ; 
 
     RAISE DEBUG '%', sql;
@@ -358,6 +357,8 @@ BEGIN
     tile_res := tile_res * 2;
 
     RAISE DEBUG '% pixels with resolution %', pixel_vals, tile_res;
+
+    resolutions := resolutions || tile_res;
 
   END LOOP;
 
