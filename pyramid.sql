@@ -8,7 +8,7 @@ END $$ LANGUAGE 'plpgsql';
 
 -- {
 CREATE OR REPLACE FUNCTION CDB_ListPyramids()
-RETURNS TABLE (tab regclass, gcol text, tcol text, ext geometry, res numeric[], tbins numeric[], fields text[])
+RETURNS TABLE (tab regclass, ptab regclass, gcol text, tcol text, ext geometry, res numeric[], tbins numeric[], fields text[])
 AS $$
 DECLARE
   r1 RECORD;
@@ -26,7 +26,7 @@ BEGIN
     tab := r1.tgrelid;
     gcol := aa[1];
     tcol := aa[2];
-    -- NOTE: aa[3] is the pyramid table regclass
+    ptab := aa[3];
     ext := aa[4];
     res := aa[5];
     tbins := aa[6];
