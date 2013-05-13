@@ -1,3 +1,5 @@
+BEGIN;
+
 -- CREATE SCHEMA IF NOT EXISTS cdb_pyramid;
 DO $$ BEGIN
   IF NOT EXISTS ( SELECT nspname FROM pg_namespace WHERE nspname = 'cdb_pyramid' ) THEN
@@ -5,6 +7,10 @@ DO $$ BEGIN
     GRANT USAGE ON SCHEMA cdb_pyramid TO public;
   END IF;
 END $$ LANGUAGE 'plpgsql';
+
+-- These are for when function signature changes
+DROP VIEW IF EXISTS cdb_pyramid.cdb_pyramid;
+DROP FUNCTION IF EXISTS CDB_ListPyramids();
 
 -- {
 CREATE OR REPLACE FUNCTION CDB_ListPyramids()
@@ -367,13 +373,9 @@ BEGIN
 
   RAISE DEBUG '% pixels with resolution %', pixel_vals, tile_res;
 
-  -- create indices
-
-  sql := 'CREATE INDEX ON ' || ptab || '(res)';
-  EXECUTE sql;
-
-  sql := 'CREATE INDEX ON ' || ptab ||' using gist (ext)';
-  EXECUTE sql;
+  -- create partial GiST index based on resolution, and analyze
+  EXECUTE 'CREATE INDEX ON ' || ptab ||' using gist (ext) WHERE res = ' || tile_res;
+  EXECUTE 'ANALYZE ' || ptab;
 
   -- compute upper levels from lower ones
 
@@ -405,14 +407,11 @@ BEGIN
 
     resolutions := resolutions || tile_res;
 
+    -- create partial GiST index based on resolution, and analyze
+    EXECUTE 'CREATE INDEX ON ' || ptab ||' using gist (ext) WHERE res = ' || tile_res;
+    EXECUTE 'ANALYZE ' || ptab;
+
   END LOOP;
-
-
-  -- Compute stats
-
-  sql := 'ANALYZE ' || ptab;
-  RAISE DEBUG '%', sql;
-  EXECUTE sql;
 
   -- 3. Setup triggers to maintain the pyramid table
   --    and indices on the pyramid table
@@ -566,3 +565,5 @@ BEGIN
 END;
 $$
 LANGUAGE 'plpgsql';
+
+END;
