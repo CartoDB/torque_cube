@@ -1,3 +1,46 @@
+-- CREATE SCHEMA IF NOT EXISTS cdb_pyramid;
+DO $$ BEGIN
+  IF NOT EXISTS ( SELECT nspname FROM pg_namespace WHERE nspname = 'cdb_pyramid' ) THEN
+    CREATE SCHEMA cdb_pyramid; 
+  END IF;
+END $$ LANGUAGE 'plpgsql';
+
+-- {
+CREATE OR REPLACE FUNCTION CDB_ListPyramids()
+RETURNS TABLE (tab regclass, gcol text, tcol text, ext geometry, res numeric[], tbins numeric[], fields text[])
+AS $$
+DECLARE
+  r1 RECORD;
+  args text;
+  aa text[];
+BEGIN
+  FOR r1 IN SELECT oid, tgrelid FROM pg_trigger
+             WHERE tgname = 'cdb_maintain_pyramid'
+  LOOP
+    args := (regexp_split_to_array(pg_get_triggerdef(r1.oid), '[\(\)]'))[2];
+    --RAISE DEBUG 'Args: %', args;
+
+    EXECUTE 'SELECT ARRAY[' ||  args || ']' INTO aa;
+
+    tab := r1.tgrelid;
+    gcol := aa[1];
+    tcol := aa[2];
+    -- NOTE: aa[3] is the pyramid table regclass
+    ext := aa[4];
+    res := aa[5];
+    tbins := aa[6];
+    fields := aa[7];
+
+    RETURN NEXT;
+
+  END LOOP;
+END;
+$$ LANGUAGE 'plpgsql';
+-- }
+
+CREATE OR REPLACE VIEW cdb_pyramid.cdb_pyramid AS
+SELECT * FROM CDB_ListPyramids();
+
 -- Add the values of a torque pixel (what) to another (target)
 --
 -- Pixel are in this form:
@@ -161,7 +204,7 @@ BEGIN
   --RAISE DEBUG 'Ntarget: % (val off %, ntslots %)', ntarget, tvaloff, ntslots;
   --RAISE DEBUG 'Value offsets: s=% t=%', svaloff, tvaloff;
 
-  -- TODO: add each value of source to value of target
+  -- add each value of source to value of target
   FOR i IN 0..(array_upper(what, 1) - svaloff) LOOP
     si := svaloff+i;
     ti := tvaloff+(i*COALESCE(NULLIF(ntslots,0),1)); 
@@ -249,7 +292,7 @@ BEGIN
   RAISE DEBUG '"%"."%" ext is %', tblinfo.nsp, tblinfo.tab, tblinfo.ext;
 
   -- 1. Create the pyramid table 
-  ptab := quote_ident(tblinfo.nsp) || '."' || tblinfo.tab || '_pyramid' || '"';
+  ptab := 'cdb_pyramid."' || tblinfo.tab || '"';
   sql := 'CREATE TABLE ' || ptab || '(res float8, ext geometry, v numeric[])';
   EXECUTE sql;
   -- if the source table can be SELECT'ed by publicuser/tileuser,
