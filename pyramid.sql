@@ -2,6 +2,7 @@
 DO $$ BEGIN
   IF NOT EXISTS ( SELECT nspname FROM pg_namespace WHERE nspname = 'cdb_pyramid' ) THEN
     CREATE SCHEMA cdb_pyramid; 
+    GRANT USAGE ON SCHEMA cdb_pyramid TO public;
   END IF;
 END $$ LANGUAGE 'plpgsql';
 
@@ -40,6 +41,7 @@ $$ LANGUAGE 'plpgsql';
 
 CREATE OR REPLACE VIEW cdb_pyramid.cdb_pyramid AS
 SELECT * FROM CDB_ListPyramids();
+GRANT SELECT ON cdb_pyramid.cdb_pyramid TO public;
 
 -- Add the values of a torque pixel (what) to another (target)
 --
