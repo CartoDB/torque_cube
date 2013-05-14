@@ -523,43 +523,43 @@ BEGIN
     END IF;
   END IF;
 
-  IF TG_OP = 'DELETE' OR TG_OP = 'UPDATE' THEN
-    IF oldinfo.g IS NOT NULL THEN
-      -- decrement
-      sql := 'UPDATE ' || ptab || ' set v = CDB_TorquePixel_del(v, '
-        || quote_literal(oldinfo.v) || ') WHERE ext && '
-        || quote_literal(oldinfo.g::text);
+  FOR i IN 1..array_upper(resolutions,1) LOOP
+
+    res := resolutions[i];
+    RAISE DEBUG ' updating resolution %', res;
+    originX := st_xmin(full_extent) - res/2.0;
+    originY := st_ymin(full_extent) - res/2.0;
+
+    IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN
+      -- increment
+      g := ST_SnapToGrid(newinfo.g, originX, originY, res, res);
+      RAISE DEBUG ' resolution % : % @ %', res, ST_AsText(g), newinfo.v;
+      -- Upsert
+      sql := 'WITH upsert as (UPDATE ' || ptab || ' set v=CDB_TorquePixel_add(v, '
+        || quote_literal(newinfo.v) 
+        || ') WHERE res = ' || res || ' AND ext && '
+        || quote_literal(newinfo.g::text)
+        || ' RETURNING ext ) INSERT INTO '
+        || ptab || '(res,ext,v) SELECT ' || res || ', ST_Envelope(ST_Buffer('
+        || quote_literal(newinfo.g::text) || ',' || (res/2.0) || ', 1)), '
+        || quote_literal(newinfo.v)
+        || ' WHERE NOT EXISTS (SELECT * FROM upsert)'; 
       RAISE DEBUG ' %', sql;
       EXECUTE sql;
     END IF;
-  END IF;
 
-  IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN
-    IF newinfo.g IS NOT NULL THEN
-      FOR i IN 1..array_upper(resolutions,1) LOOP
-        res := resolutions[i];
-        RAISE DEBUG ' updating resolution %', res;
-        originX := st_xmin(full_extent) - res/2.0;
-        originY := st_ymin(full_extent) - res/2.0;
-
-        -- increment
-        g := ST_SnapToGrid(newinfo.g, originX, originY, res, res);
-        RAISE DEBUG ' resolution % : % @ %', res, ST_AsText(g), newinfo.v;
-        -- Upsert
-        sql := 'WITH upsert as (UPDATE ' || ptab || ' set v=CDB_TorquePixel_add(v, '
-          || quote_literal(newinfo.v) 
-          || ') WHERE res = ' || res || ' AND ext && '
-          || quote_literal(newinfo.g::text)
-          || ' RETURNING ext ) INSERT INTO '
-          || ptab || '(res,ext,v) SELECT ' || res || ', ST_Envelope(ST_Buffer('
-          || quote_literal(newinfo.g::text) || ',' || (res/2.0) || ', 1)), '
-          || quote_literal(newinfo.v)
-          || ' WHERE NOT EXISTS (SELECT * FROM upsert)'; 
+    IF TG_OP = 'DELETE' OR TG_OP = 'UPDATE' THEN
+      IF oldinfo.g IS NOT NULL THEN
+        -- decrement
+        sql := 'UPDATE ' || ptab || ' set v = CDB_TorquePixel_del(v, '
+          || quote_literal(oldinfo.v) || ') WHERE res = ' || res
+          || ' AND ext && ' || quote_literal(oldinfo.g::text);
         RAISE DEBUG ' %', sql;
         EXECUTE sql;
-      END LOOP;
+      END IF;
     END IF;
-  END IF;
+
+  END LOOP;
 
   RETURN NULL;
 END;
