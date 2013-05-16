@@ -299,6 +299,10 @@ BEGIN
 
   RAISE DEBUG '"%"."%" ext is %', tblinfo.nsp, tblinfo.tab, tblinfo.ext;
 
+  IF tblinfo.ext IS NULL THEN
+    RAISE EXCEPTION 'Cannot estimate source table extent, try running ANALYZE over it';
+  END IF;
+
   -- 1. Create the pyramid table 
   ptab := 'cdb_pyramid."' || tblinfo.tab || '"';
   sql := 'CREATE TABLE ' || ptab || '(res float8, ext geometry, v numeric[])';
@@ -363,7 +367,7 @@ BEGIN
 
   sql := sql 
       || ']) as v FROM ' || tbl::text
-      || ' GROUP BY ext'; 
+      || ' WHERE ' || quote_ident(col) || ' IS NOT NULL GROUP BY ext'; 
 
   RAISE DEBUG '%', sql;
 
@@ -471,7 +475,7 @@ BEGIN
   temporal_bins := TG_ARGV[5];
   fields := TG_ARGV[6];
 
-  RAISE DEBUG 'Fields: %', fields;
+  -- RAISE DEBUG 'Fields: %', fields;
 
   -- trigger procedures cannot take NULL, so we assume empty string is a null
   IF tcol = '' THEN tcol := null; END IF;
@@ -530,7 +534,8 @@ BEGIN
     originX := st_xmin(full_extent) - res/2.0;
     originY := st_ymin(full_extent) - res/2.0;
 
-    IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN
+    IF ( TG_OP = 'INSERT' OR TG_OP = 'UPDATE' ) AND newinfo.g IS NOT NULL
+    THEN
       -- increment
       g := ST_SnapToGrid(newinfo.g, originX, originY, res, res);
       RAISE DEBUG ' resolution % : % @ %', res, ST_AsText(g), newinfo.v;
