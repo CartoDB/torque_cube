@@ -5,13 +5,10 @@ WITH tinfo AS (
   SELECT extract(epoch from min(created_at)) as min,
          extract(epoch from max(created_at)) as max
   FROM istituti_small
-), tslots AS (
-  SELECT array_agg((t.min + ( (t.max-t.min) / 16 ) * i)::numeric) as slots
-  FROM tinfo t, generate_series(1, 15) i
 )
-SELECT CDB_BuildPyramid('istituti_small', 'the_geom_webmercator', '{val}', 'created_at',
-                        t.slots)
-FROM tslots t;
+SELECT CDB_BuildPyramid('istituti_small', 'the_geom_webmercator', '{val}',
+ 'floor(((extract(epoch from ($1)."created_at") - ' || min || ')/(' || max || '-' || min || '))*16)::numeric')
+FROM tinfo;
 
 -- Print summary of pixels
 select count(val) as count0, sum(val) as v0 from  istituti_small;
@@ -80,7 +77,7 @@ WHERE i.ext && inp.e ORDER BY inp.e;
 --  now with no time
 
 DROP TABLE IF EXISTS cdb_pyramid.istituti_small CASCADE;
-SELECT CDB_BuildPyramid('istituti_small', 'the_geom_webmercator', NULL, NULL, NULL);
+SELECT CDB_BuildPyramid('istituti_small', 'the_geom_webmercator', NULL, NULL);
 
 select res, count(ext) from cdb_pyramid.istituti_small
 group by res order by res desc;

@@ -1,4 +1,4 @@
-set client_min_messages to ERROR;
+set client_min_messages to WARNING;
 create table source (id int, g geometry, t timestamp, v int);
 INSERT INTO source VALUES
  (0, 'POINT(0 2047)', now(), 1),
@@ -7,7 +7,7 @@ INSERT INTO source VALUES
  (3, 'POINT(2047 0)', now(), null)
  ;
 ANALYZE source;
-SELECT CDB_BuildPyramid('source', 'g', '{v}', 't', ARRAY[extract(epoch from now())::numeric]);
+SELECT CDB_BuildPyramid('source', 'g', '{v}', 'CASE WHEN ($1).t < ' || quote_literal(now()) || ' THEN 0 ELSE 1 END');
 SELECT 'C',st_xmax(ext),st_ymax(ext),v FROM cdb_pyramid.source
   ORDER BY res, ext;
 INSERT INTO source VALUES

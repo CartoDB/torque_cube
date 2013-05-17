@@ -13,8 +13,9 @@ DROP VIEW IF EXISTS cdb_pyramid.cdb_pyramid;
 DROP FUNCTION IF EXISTS CDB_ListPyramids();
 
 -- {
+DROP FUNCTION IF EXISTS CDB_ListPyramids();
 CREATE OR REPLACE FUNCTION CDB_ListPyramids()
-RETURNS TABLE (tab regclass, ptab regclass, gcol text, tcol text, ext geometry, res numeric[], tbins numeric[], fields text[])
+RETURNS TABLE (tab regclass, ptab regclass, gcol text, binner text, ext geometry, res numeric[], fields text[])
 AS $$
 DECLARE
   r1 RECORD;
@@ -31,12 +32,11 @@ BEGIN
 
     tab := r1.tgrelid;
     gcol := aa[1];
-    tcol := aa[2];
+    binner := aa[2];
     ptab := aa[3];
     ext := aa[4];
     res := aa[5];
-    tbins := aa[6];
-    fields := aa[7];
+    fields := aa[6];
 
     RETURN NEXT;
 
@@ -261,11 +261,11 @@ LANGUAGE 'plpgsql' STRICT;
 -- @param col geometry column
 -- @param fields array of field names to aggregate (sum) in output pixels,
 --        can be NULL for none.
--- @param tcol time column, expected to be timestamp, can be NULL
--- @temporal_bins array of epoch values to separate time slots
---                (lower to higher), can be NULL
+-- @param binner expression yelding an integer used as the bin for each row.
+--               can be NULL for no-bins
 -- 
-CREATE OR REPLACE FUNCTION CDB_BuildPyramid(tbl regclass, col text, fields text[], tcol text, temporal_bins numeric[])
+DROP FUNCTION IF EXISTS CDB_BuildPyramid(tbl regclass, col text, fields text[], tcol text, temporal_bins numeric[]);
+CREATE OR REPLACE FUNCTION CDB_BuildPyramid(tbl regclass, col text, fields text[], binner text)
 RETURNS void AS
 $$
 DECLARE
@@ -343,16 +343,9 @@ BEGIN
       || ',' || (tile_res/2.0) || ', 1)) as ext, '
       || 'CDB_TorquePixel_agg(ARRAY['
       ;
-  IF tcol IS NOT NULL THEN
+  IF binner IS NOT NULL THEN
     sql := sql
-      || '1::numeric,CASE';
-    FOR i IN 1..array_upper(temporal_bins, 1) LOOP
-      sql := sql
-        || ' WHEN extract(epoch from ' || quote_ident(tcol) || ') < '
-        || temporal_bins[i] || ' THEN ' || (i-1);
-    END LOOP;
-    sql := sql || ' ELSE ' || array_upper(temporal_bins, 1)
-      || ' END';
+      || '1::numeric,' || replace(binner, '($1)', tbl::text);
   ELSE
     sql := sql || '0::numeric';
   END IF;
@@ -369,7 +362,7 @@ BEGIN
       || ']) as v FROM ' || tbl::text
       || ' WHERE ' || quote_ident(col) || ' IS NOT NULL GROUP BY ext'; 
 
-  RAISE DEBUG '%', sql;
+  RAISE DEBUG 'SQL: %', sql;
 
   EXECUTE sql;
 
@@ -425,10 +418,10 @@ BEGIN
 
   sql := 'CREATE TRIGGER cdb_maintain_pyramid AFTER INSERT OR UPDATE OR DELETE ON '
     || tbl || ' FOR EACH ROW EXECUTE PROCEDURE _CDB_PyramidTrigger('
-    || col || ',' || quote_literal(COALESCE(tcol, '')) || ',' || quote_literal(ptab) || ','
+    || col || ',' || quote_literal(COALESCE(binner, '')) || ','
+    || quote_literal(ptab) || ','
     || quote_literal(tile_ext::text) || ','
     || quote_literal(resolutions::text) || ','
-    || quote_literal(COALESCE(temporal_bins, '{}')::text) || ','
     || quote_literal(COALESCE(fields, '{}')::text)
     || ')';
   RAISE DEBUG 'TRIGGER CREATION: %', sql;
@@ -447,12 +440,11 @@ $$
 DECLARE
   gcol text;
   fields text[];
-  tcol text;
   ptab text;
   full_extent geometry;
   resolutions float8[];
   res float8;
-  temporal_bins numeric[];
+  binner text;
   sql text;
   g geometry;
   i integer;
@@ -468,28 +460,21 @@ BEGIN
   END IF;
 
   gcol := TG_ARGV[0];
-  tcol := TG_ARGV[1];
+  binner := TG_ARGV[1];
   ptab := TG_ARGV[2];
   full_extent := TG_ARGV[3];
   resolutions := TG_ARGV[4];
-  temporal_bins := TG_ARGV[5];
-  fields := TG_ARGV[6];
+  fields := TG_ARGV[5];
 
   -- RAISE DEBUG 'Fields: %', fields;
 
   -- trigger procedures cannot take NULL, so we assume empty string is a null
-  IF tcol = '' THEN tcol := null; END IF;
+  IF binner = '' THEN binner := null; END IF;
 
   sql := 'SELECT ($1).' || quote_ident(gcol) || ' as g';
   sql := sql || ', ARRAY[';
-  IF tcol IS NOT NULL THEN
-    sql := sql || '1::numeric, CASE ';
-    FOR i IN 1..array_upper(temporal_bins, 1) LOOP
-      sql := sql || ' WHEN extract(epoch from ($1).'
-        || quote_ident(tcol) || ') < '
-        || temporal_bins[i] || ' THEN ' || (i-1);
-    END LOOP;
-    sql := sql || ' ELSE ' || array_upper(temporal_bins, 1) || ' END';
+  IF binner IS NOT NULL THEN
+    sql := sql || '1::numeric, ' || binner;
   ELSE
     sql := sql || '0::numeric';
   END IF;
@@ -517,7 +502,7 @@ BEGIN
   -- Do nothing on UPDATE if old and new fields of interest
   -- did not change
   IF TG_OP = 'UPDATE' THEN
-    IF tcol IS NULL OR oldinfo.v[2] = newinfo.v[2] THEN
+    IF binner IS NULL OR oldinfo.v[2] = newinfo.v[2] THEN
       IF oldinfo.g = newinfo.g OR (
               ST_SnapToGrid(oldinfo.g, originX, originY, res, res)
             = ST_SnapToGrid(newinfo.g, originX, originY, res, res) )
