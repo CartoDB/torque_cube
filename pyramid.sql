@@ -547,6 +547,7 @@ BEGIN
     IF TG_OP = 'DELETE' OR TG_OP = 'UPDATE' THEN
       IF oldinfo.g IS NOT NULL THEN
         -- decrement
+        g := ST_SnapToGrid(oldinfo.g, originX, originY, res, res);
         sql := 'UPDATE ' || ptab || ' set v = CDB_TorquePixel_del(v, '
           || quote_literal(oldinfo.v) || ') WHERE res = ' || res
           || ' AND ext && ' || quote_literal(oldinfo.g::text);
