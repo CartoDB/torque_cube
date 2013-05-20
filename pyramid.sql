@@ -263,9 +263,10 @@ LANGUAGE 'plpgsql' STRICT;
 --        can be NULL for none.
 -- @param binner expression yelding an integer used as the bin for each row.
 --               can be NULL for no-bins
--- 
+-- }{
 DROP FUNCTION IF EXISTS CDB_BuildPyramid(tbl regclass, col text, fields text[], tcol text, temporal_bins numeric[]);
-CREATE OR REPLACE FUNCTION CDB_BuildPyramid(tbl regclass, col text, fields text[], binner text)
+DROP FUNCTION IF EXISTS CDB_BuildPyramid(tbl regclass, col text, fields text[], binner text);
+CREATE OR REPLACE FUNCTION CDB_BuildPyramid(tbl regclass, col text, fields text[], binner text, max_res float8 DEFAULT NULL)
 RETURNS void AS
 $$
 DECLARE
@@ -323,9 +324,13 @@ BEGIN
   -- 2. Start from bottom-level summary and add summarize up to top
   --    Stop condition is when we have less than maxpix "pixels"
   tile_ext := ST_SetSRID(tblinfo.ext::geometry, tblinfo.srid);
-  tile_res := least(st_xmax(tile_ext)-st_xmin(tile_ext), st_ymax(tile_ext)-st_ymin(tile_ext))
-        / (256*8); -- enough to render 8 tiles per side with no loss of precision
-  -- TODO: round resolution to be on the webmercator resolution set ?
+  IF max_res IS NULL THEN
+    tile_res := least(st_xmax(tile_ext)-st_xmin(tile_ext), st_ymax(tile_ext)-st_ymin(tile_ext))
+          / (256*8); -- enough to render 8 tiles per side with no loss of precision
+    -- TODO: round resolution to be on the webmercator resolution set ?
+  ELSE 
+    tile_res := max_res;
+  END IF;
 
   -- TODO: re-compute tile_ext to always be the full webmercator extent
   --       or better yet take it as a parameter
@@ -337,8 +342,8 @@ BEGIN
       || tile_res
       || ', ST_Envelope(ST_Buffer('
       || 'ST_SnapToGrid(' || quote_ident(col) || ', '
-      || st_xmin(tile_ext) - tile_res/2.0 || ','
-      || st_ymin(tile_ext) - tile_res/2.0 || ','
+      || - tile_res/2.0 || ','
+      || - tile_res/2.0 || ','
       || tile_res || ',' || tile_res || ')'
       || ',' || (tile_res/2.0) || ', 1)) as ext, '
       || 'CDB_TorquePixel_agg(ARRAY['
@@ -383,8 +388,7 @@ BEGIN
         || tile_res * 2
         || ', ST_Envelope(ST_Buffer('
         || 'ST_SnapToGrid(ST_Centroid(ext), '
-        || st_xmin(tile_ext) - tile_res || ','
-        || st_ymin(tile_ext) - tile_res || ','
+        || - tile_res || ',' || - tile_res || ','
         || tile_res * 2 || ',' || tile_res * 2
         || '), ' || tile_res
         || ')) as new_ext, CDB_TorquePixel_agg(v) FROM '
