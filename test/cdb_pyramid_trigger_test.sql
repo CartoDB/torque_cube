@@ -26,5 +26,8 @@ SELECT 'U1',st_xmax(ext) x,st_ymax(ext) y,v FROM cdb_pyramid.source
 DELETE FROM source WHERE id = 1;
 SELECT 'D0',st_xmax(ext) x,st_ymax(ext) y,v FROM cdb_pyramid.source
   ORDER BY res, x, y;
+
+SELECT 'MD', tab, ptab, res FROM cdb_pyramid.cdb_pyramid;
+
 DROP TABLE source;
 DROP TABLE cdb_pyramid.source;

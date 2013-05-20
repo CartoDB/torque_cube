@@ -25,7 +25,7 @@ BEGIN
   FOR r1 IN SELECT oid, tgrelid FROM pg_trigger
              WHERE tgname = 'cdb_maintain_pyramid'
   LOOP
-    args := (regexp_split_to_array(pg_get_triggerdef(r1.oid), '[\(\)]'))[2];
+    args := regexp_replace(pg_get_Triggerdef(r1.oid), '[^(]*\((.*)\)', '\1');
     --RAISE DEBUG 'Args: %', args;
 
     EXECUTE 'SELECT ARRAY[' ||  args || ']' INTO aa;

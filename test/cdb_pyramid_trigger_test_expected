@@ -22,5 +22,6 @@ DELETE 1
 D0|0|0|{1,1,2,3}
 D0|0|2047|{2,0,1,0,1,0,2}
 D0|2047|0|{2,0,1,1,1,NULL,2}
+MD|source|cdb_pyramid.source|{0.99951171875}
 DROP TABLE
 DROP TABLE
