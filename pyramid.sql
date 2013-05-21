@@ -263,6 +263,8 @@ LANGUAGE 'plpgsql' STRICT;
 --        can be NULL for none.
 -- @param binner expression yelding an integer used as the bin for each row.
 --               can be NULL for no-bins
+-- @param max_res maximum resolution to start building pyramid from.
+--                If NULL, we makes a guess.
 -- }{
 DROP FUNCTION IF EXISTS CDB_BuildPyramid(tbl regclass, col text, fields text[], tcol text, temporal_bins numeric[]);
 DROP FUNCTION IF EXISTS CDB_BuildPyramid(tbl regclass, col text, fields text[], binner text);
