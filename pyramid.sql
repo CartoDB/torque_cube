@@ -497,8 +497,8 @@ BEGIN
   IF TG_OP = 'DELETE' OR TG_OP = 'UPDATE' THEN
     EXECUTE sql USING OLD INTO oldinfo;
     res := resolutions[1]; -- we assume first element is highest (min) 
-    originX := st_xmin(full_extent) - res/2.0;
-    originY := st_ymin(full_extent) - res/2.0;
+    originX := - res/2.0;
+    originY := - res/2.0;
 
     --RAISE DEBUG 'oldinfo: %', oldinfo;
   END IF;
@@ -520,8 +520,8 @@ BEGIN
 
     res := resolutions[i];
     RAISE DEBUG ' updating resolution %', res;
-    originX := st_xmin(full_extent) - res/2.0;
-    originY := st_ymin(full_extent) - res/2.0;
+    originX := - res/2.0;
+    originY := - res/2.0;
 
     IF ( TG_OP = 'INSERT' OR TG_OP = 'UPDATE' ) THEN
       IF newinfo.g IS NOT NULL
@@ -536,7 +536,7 @@ BEGIN
           || quote_literal(newinfo.g::text)
           || ' RETURNING ext ) INSERT INTO '
           || ptab || '(res,ext,v) SELECT ' || res || ', ST_Envelope(ST_Buffer('
-          || quote_literal(newinfo.g::text) || ',' || (res/2.0) || ', 1)), '
+          || quote_literal(g::text) || ',' || (res/2.0) || ', 1)), '
           || quote_literal(newinfo.v)
           || ' WHERE NOT EXISTS (SELECT * FROM upsert)'; 
         RAISE DEBUG ' %', sql;
@@ -550,7 +550,7 @@ BEGIN
         g := ST_SnapToGrid(oldinfo.g, originX, originY, res, res);
         sql := 'UPDATE ' || ptab || ' set v = CDB_TorquePixel_del(v, '
           || quote_literal(oldinfo.v) || ') WHERE res = ' || res
-          || ' AND ext && ' || quote_literal(oldinfo.g::text);
+          || ' AND ext && ' || quote_literal(g::text);
         RAISE DEBUG ' %', sql;
         EXECUTE sql;
       END IF;
