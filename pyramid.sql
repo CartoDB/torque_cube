@@ -477,8 +477,14 @@ BEGIN
   -- trigger procedures cannot take NULL, so we assume empty string is a null
   IF binner = '' THEN binner := null; END IF;
 
-  sql := 'SELECT ($1).' || quote_ident(gcol) || ' as g';
-  sql := sql || ', ARRAY[';
+  res := resolutions[1]; -- we assume first element is highest (min) 
+  originX := - res/2.0;
+  originY := - res/2.0;
+
+  sql := 'SELECT ST_SRID(($1).' || quote_ident(gcol)
+      || ') as s, ST_SnapToGrid(($1).' || quote_ident(gcol) || ', '
+      || originX || ',' || originY || ',' || res || ',' || res
+      || ') as g, ARRAY[';
   IF binner IS NOT NULL THEN
     sql := sql || '1::numeric, ' || binner;
   ELSE
@@ -498,10 +504,6 @@ BEGIN
   -- Extract info from OLD record
   IF TG_OP = 'DELETE' OR TG_OP = 'UPDATE' THEN
     EXECUTE sql USING OLD INTO oldinfo;
-    res := resolutions[1]; -- we assume first element is highest (min) 
-    originX := - res/2.0;
-    originY := - res/2.0;
-
     --RAISE DEBUG 'oldinfo: %', oldinfo;
   END IF;
 
@@ -509,10 +511,7 @@ BEGIN
   -- did not change
   IF TG_OP = 'UPDATE' THEN
     IF binner IS NULL OR oldinfo.v[2] = newinfo.v[2] THEN
-      IF oldinfo.g = newinfo.g OR (
-              ST_SnapToGrid(oldinfo.g, originX, originY, res, res)
-            = ST_SnapToGrid(newinfo.g, originX, originY, res, res) )
-      THEN
+      IF oldinfo.g = newinfo.g THEN
         RETURN NULL;
       END IF;
     END IF;
@@ -521,40 +520,36 @@ BEGIN
   FOR i IN 1..array_upper(resolutions,1) LOOP
 
     res := resolutions[i];
-    RAISE DEBUG ' updating resolution %', res;
-    originX := - res/2.0;
-    originY := - res/2.0;
+    --RAISE DEBUG ' updating resolution %', res;
 
-    IF ( TG_OP = 'INSERT' OR TG_OP = 'UPDATE' ) THEN
+    IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN
       IF newinfo.g IS NOT NULL
       THEN
         -- increment
-        g := ST_SnapToGrid(newinfo.g, originX, originY, res, res);
-        RAISE DEBUG ' resolution % : % @ %', res, ST_AsText(g), newinfo.v;
+        --RAISE DEBUG ' resolution % : % @ %', res, ST_AsText(g), newinfo.v;
+        g := ST_MakeEnvelope(
+                ST_X(newinfo.g)-res/2.0, ST_Y(newinfo.g)-res/2.0,
+                ST_X(newinfo.g)+res/2.0, ST_Y(newinfo.g)+res/2.0,
+                newinfo.s
+             );
         -- Upsert
-        sql := 'WITH upsert as (UPDATE ' || ptab || ' set v=CDB_TorquePixel_add(v, '
-          || quote_literal(newinfo.v) 
-          || ') WHERE res = ' || res || ' AND ext && '
-          || quote_literal(g::text)
-          || ' RETURNING ext ) INSERT INTO '
-          || ptab || '(res,ext,v) SELECT ' || res || ', ST_Envelope(ST_Buffer('
-          || quote_literal(g::text) || ',' || (res/2.0) || ', 1)), '
-          || quote_literal(newinfo.v)
-          || ' WHERE NOT EXISTS (SELECT * FROM upsert)'; 
-        RAISE DEBUG ' %', sql;
-        EXECUTE sql;
+        sql := 'WITH upsert as (UPDATE ' || ptab
+          || ' set v=CDB_TorquePixel_add(v, $2) WHERE res = $3 AND ext && $1'
+          || ' RETURNING res ) INSERT INTO '
+          || ptab || '(res,ext,v) SELECT $3, $4, $2 '
+          || 'WHERE NOT EXISTS (SELECT res FROM upsert)'; 
+        --RAISE DEBUG ' %', sql;
+        EXECUTE sql USING newinfo.g, newinfo.v, res, g;
       END IF;
     END IF;
 
     IF TG_OP = 'DELETE' OR TG_OP = 'UPDATE' THEN
       IF oldinfo.g IS NOT NULL THEN
         -- decrement
-        g := ST_SnapToGrid(oldinfo.g, originX, originY, res, res);
-        sql := 'UPDATE ' || ptab || ' set v = CDB_TorquePixel_del(v, '
-          || quote_literal(oldinfo.v) || ') WHERE res = ' || res
-          || ' AND ext && ' || quote_literal(g::text);
-        RAISE DEBUG ' %', sql;
-        EXECUTE sql;
+        sql := 'UPDATE ' || ptab || ' set v = CDB_TorquePixel_del(v, $1)'
+          || ' WHERE res = $2 AND ext && $3';
+        --RAISE DEBUG ' % USING %, %, %', sql, oldinfo.v, res, oldinfo.g;
+        EXECUTE sql USING oldinfo.v, res, oldinfo.g;
       END IF;
     END IF;
 
