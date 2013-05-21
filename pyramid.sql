@@ -195,7 +195,7 @@ BEGIN
     END LOOP;
     IF tvaloff IS NULL THEN
       -- nothing to do here (unexpected?)
-      RAISE WARNING 'Source pixel timeslot (%) not found in target %', tslot, target;
+      RAISE EXCEPTION 'Source pixel timeslot (%) not found in target %', tslot, target;
       return target;
     END IF;
   ELSE
