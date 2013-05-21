@@ -535,7 +535,7 @@ BEGIN
         sql := 'WITH upsert as (UPDATE ' || ptab || ' set v=CDB_TorquePixel_add(v, '
           || quote_literal(newinfo.v) 
           || ') WHERE res = ' || res || ' AND ext && '
-          || quote_literal(newinfo.g::text)
+          || quote_literal(g::text)
           || ' RETURNING ext ) INSERT INTO '
           || ptab || '(res,ext,v) SELECT ' || res || ', ST_Envelope(ST_Buffer('
           || quote_literal(g::text) || ',' || (res/2.0) || ', 1)), '
