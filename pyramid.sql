@@ -256,6 +256,33 @@ END;
 $$
 LANGUAGE 'plpgsql' STRICT;
 
+-- Return sum of field values for all bins
+-- @param col 0-based attribute index
+-- {
+CREATE OR REPLACE FUNCTION CDB_TorquePixel_sum(pixel numeric[], col integer)
+RETURNS numeric
+AS
+$$
+DECLARE
+  i integer;
+  vi integer;
+  nslots integer;
+  v numeric;
+BEGIN
+  v := 0;
+  nslots := COALESCE(NULLIF(pixel[1],0),1);
+  --RAISE DEBUG 'p:% -- nslots:%', pixel, nslots;
+  FOR i IN 1..nslots LOOP
+    vi := 2 + pixel[1] + col * nslots + (i-1);
+    --RAISE DEBUG 'vi: %', vi;
+    v := v + pixel[vi];
+  END LOOP;
+  RETURN v;
+END;
+$$
+LANGUAGE 'plpgsql' STRICT;
+-- }
+
 -- {
 -- @param tbl table identifier (passing its name would work)
 -- @param col geometry column
