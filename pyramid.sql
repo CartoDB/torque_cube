@@ -290,15 +290,23 @@ LANGUAGE 'plpgsql' STRICT;
 --               can be NULL for no-bins
 -- @param max_res maximum resolution to start building pyramid from.
 --                If NULL, we makes a guess.
+-- @param namesuffix name suffix for the pyramid table.
+--                   If NULL, we use the hash of parameters
+--
+-- @returns the regclass of the pyramid table
+--
 -- }{
 DROP FUNCTION IF EXISTS CDB_BuildPyramid(tbl regclass, col text, fields text[], tcol text, temporal_bins numeric[]);
 DROP FUNCTION IF EXISTS CDB_BuildPyramid(tbl regclass, col text, fields text[], binner text);
-CREATE OR REPLACE FUNCTION CDB_BuildPyramid(tbl regclass, col text, fields text[], binner text, max_res float8 DEFAULT NULL)
-RETURNS void AS
+DROP FUNCTION IF EXISTS CDB_BuildPyramid(tbl regclass, col text, fields text[], binner text, max_res float8);
+
+CREATE OR REPLACE FUNCTION CDB_BuildPyramid(tbl regclass, col text, fields text[], binner text, max_res float8 DEFAULT NULL, namesuffix text DEFAULT NULL)
+RETURNS regclass AS
 $$
 DECLARE
   sql text;
   ptab text; -- pyramids table
+  ptab_suffix text; -- will be created as an hash of parameters if null
   maxpix integer; -- max pixels 
   tblinfo RECORD;
   tbltinfo RECORD; -- table time info
@@ -332,7 +340,8 @@ BEGIN
   END IF;
 
   -- 1. Create the pyramid table 
-  ptab := 'cdb_pyramid."' || tblinfo.tab || '"';
+  ptab_suffix := CASE WHEN namesuffix IS NULL THEN '_' || md5(col || binner || fields::text) ELSE namesuffix END;
+  ptab := 'cdb_pyramid."' || tblinfo.tab || ptab_suffix || '"';
   sql := 'CREATE TABLE ' || ptab || '(res float8, ext geometry, v numeric[])';
   EXECUTE sql;
   -- if the source table can be SELECT'ed by publicuser/tileuser,
@@ -458,6 +467,7 @@ BEGIN
   RAISE DEBUG 'TRIGGER CREATION: %', sql;
   EXECUTE sql;
 
+  RETURN ptab::regclass;
 
 END;
 $$

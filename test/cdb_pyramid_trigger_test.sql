@@ -7,7 +7,7 @@ INSERT INTO source VALUES
  (3, 'POINT(2047 0)', 3, null)
  ;
 ANALYZE source;
-SELECT CDB_BuildPyramid('source', 'g', '{v}', 'CASE WHEN ($1).t < 4 THEN 0 ELSE 1 END');
+SELECT CDB_BuildPyramid('source', 'g', '{v}', 'CASE WHEN ($1).t < 4 THEN 0 ELSE 1 END', NULL, '');
 SELECT 'C',st_xmax(ext),st_ymax(ext),v FROM cdb_pyramid.source
   ORDER BY res, ext;
 INSERT INTO source VALUES
