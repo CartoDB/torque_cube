@@ -23,7 +23,7 @@ DECLARE
   aa text[];
 BEGIN
   FOR r1 IN SELECT oid, tgrelid FROM pg_trigger
-             WHERE tgname = 'cdb_maintain_pyramid'
+             WHERE tgname like 'cdb_maintain_pyramid%'
   LOOP
     args := regexp_replace(pg_get_Triggerdef(r1.oid), '[^(]*\((.*)\)', '\1');
     --RAISE DEBUG 'Args: %', args;
@@ -452,11 +452,11 @@ BEGIN
 
   -- 3. Setup triggers to maintain the pyramid table
   --    and indices on the pyramid table
-  sql := 'DROP TRIGGER IF EXISTS cdb_maintain_pyramid ON ' || tbl;
+  sql := 'DROP TRIGGER IF EXISTS cdb_maintain_pyramid ' || ptab_suffix || ' ON ' || tbl;
   RAISE DEBUG '%', sql;
   EXECUTE sql;
 
-  sql := 'CREATE TRIGGER cdb_maintain_pyramid AFTER INSERT OR UPDATE OR DELETE ON '
+  sql := 'CREATE TRIGGER cdb_maintain_pyramid ' || ptab_suffix || ' AFTER INSERT OR UPDATE OR DELETE ON '
     || tbl || ' FOR EACH ROW EXECUTE PROCEDURE _CDB_PyramidTrigger('
     || col || ',' || quote_literal(COALESCE(binner, '')) || ','
     || quote_literal(ptab) || ','
