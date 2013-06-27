@@ -452,11 +452,11 @@ BEGIN
 
   -- 3. Setup triggers to maintain the pyramid table
   --    and indices on the pyramid table
-  sql := 'DROP TRIGGER IF EXISTS cdb_maintain_pyramid ' || ptab_suffix || ' ON ' || tbl;
+  sql := 'DROP TRIGGER IF EXISTS cdb_maintain_pyramid' || ptab_suffix || ' ON ' || tbl;
   RAISE DEBUG '%', sql;
   EXECUTE sql;
 
-  sql := 'CREATE TRIGGER cdb_maintain_pyramid ' || ptab_suffix || ' AFTER INSERT OR UPDATE OR DELETE ON '
+  sql := 'CREATE TRIGGER cdb_maintain_pyramid' || ptab_suffix || ' AFTER INSERT OR UPDATE OR DELETE ON '
     || tbl || ' FOR EACH ROW EXECUTE PROCEDURE _CDB_PyramidTrigger('
     || col || ',' || quote_literal(COALESCE(binner, '')) || ','
     || quote_literal(ptab) || ','
